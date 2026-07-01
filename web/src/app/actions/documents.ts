@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { publishProcessDocumentTask } from "@/lib/celery";
 import { getCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
@@ -36,15 +37,33 @@ export async function uploadDocument(
     return { error: `Upload failed: ${uploadError.message}` };
   }
 
-  const { error: insertError } = await supabase.from("documents").insert({
-    project_id: projectId,
-    company_id: companyId,
-    storage_path: storagePath,
-    status: "pending",
-  });
+  const { data: document, error: insertError } = await supabase
+    .from("documents")
+    .insert({
+      project_id: projectId,
+      company_id: companyId,
+      storage_path: storagePath,
+      status: "pending",
+    })
+    .select("id")
+    .single();
 
-  if (insertError) {
-    return { error: `Upload stored, but record creation failed: ${insertError.message}` };
+  if (insertError || !document) {
+    return { error: `Upload stored, but record creation failed: ${insertError?.message}` };
+  }
+
+  try {
+    await publishProcessDocumentTask(document.id, companyId, storagePath);
+  } catch (err) {
+    // The Document row and file both exist; only the pipeline kickoff
+    // failed. Document.status stays "pending" with no pipeline events --
+    // surfacing that distinction to the user is a Phase 3+ UX gap, not
+    // something to paper over here with a fake retry.
+    return {
+      error: `Upload succeeded, but starting processing failed: ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
+    };
   }
 
   revalidatePath(`/projects/${projectId}`);

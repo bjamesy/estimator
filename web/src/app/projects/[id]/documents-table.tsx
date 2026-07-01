@@ -1,13 +1,10 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { extractDocument } from "@/app/actions/extraction";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { ExtractionPayload } from "@/lib/extraction";
+import { createClient } from "@/lib/supabase/client";
 
 type Document = {
   id: string;
@@ -16,26 +13,82 @@ type Document = {
   created_at: string;
 };
 
+type LatestEvent = {
+  stage: string;
+  status: "started" | "succeeded" | "failed";
+  error_message: string | null;
+} | null;
+
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = {
   pending: "secondary",
   confirmed: "default",
   failed: "destructive",
 };
 
-type ExtractionState = {
-  loading: boolean;
-  data: ExtractionPayload | null;
-  error: string | null;
-};
+const POLL_INTERVAL_MS = 2000;
 
-export function DocumentsTable({ documents }: { documents: Document[] }) {
-  const [results, setResults] = useState<Record<string, ExtractionState>>({});
+export function DocumentsTable({ documents: initialDocuments }: { documents: Document[] }) {
+  const [documents, setDocuments] = useState(initialDocuments);
+  const [latestEvents, setLatestEvents] = useState<Record<string, LatestEvent>>({});
 
-  async function handleExtract(documentId: string) {
-    setResults((prev) => ({ ...prev, [documentId]: { loading: true, data: null, error: null } }));
-    const { data, error } = await extractDocument(documentId);
-    setResults((prev) => ({ ...prev, [documentId]: { loading: false, data, error } }));
-  }
+  // initialDocuments is a fresh array every time the parent Server
+  // Component re-renders (e.g. after revalidatePath on upload) -- useState's
+  // initializer only runs on mount, so without this the table would never
+  // show newly uploaded documents until a full page reload.
+  useEffect(() => {
+    setDocuments(initialDocuments);
+  }, [initialDocuments]);
+
+  useEffect(() => {
+    const pendingIds = documents.filter((d) => d.status === "pending").map((d) => d.id);
+    if (pendingIds.length === 0) return;
+
+    const supabase = createClient();
+    let cancelled = false;
+
+    async function poll() {
+      const [{ data: docs }, { data: events }] = await Promise.all([
+        supabase.from("documents").select("id, storage_path, status, created_at").in("id", pendingIds),
+        supabase
+          .from("document_processing_events")
+          .select("document_id, stage, status, error_message, started_at")
+          .in("document_id", pendingIds)
+          .order("started_at", { ascending: false }),
+      ]);
+
+      if (cancelled) return;
+
+      if (docs) {
+        setDocuments((prev) => prev.map((d) => docs.find((updated) => updated.id === d.id) ?? d));
+      }
+
+      if (events) {
+        setLatestEvents((prev) => {
+          const next = { ...prev };
+          for (const documentId of pendingIds) {
+            const latest = events.find((e) => e.document_id === documentId);
+            if (latest) {
+              next[documentId] = {
+                stage: latest.stage,
+                status: latest.status,
+                error_message: latest.error_message,
+              };
+            }
+          }
+          return next;
+        });
+      }
+    }
+
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // Re-run only when the set of pending document ids changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents.map((d) => (d.status === "pending" ? d.id : null)).join(",")]);
 
   return (
     <Table>
@@ -44,92 +97,38 @@ export function DocumentsTable({ documents }: { documents: Document[] }) {
           <TableHead>File</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Uploaded</TableHead>
-          <TableHead />
         </TableRow>
       </TableHeader>
       <TableBody>
         {documents.map((doc) => {
-          const result = results[doc.id];
+          const latest = latestEvents[doc.id];
           return (
-            <Fragment key={doc.id}>
-              <TableRow>
-                <TableCell className="max-w-xs truncate">
-                  {doc.storage_path.split("/").pop()}
-                </TableCell>
-                <TableCell>
+            <TableRow key={doc.id}>
+              <TableCell className="max-w-xs truncate">
+                {doc.storage_path.split("/").pop()}
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col gap-1">
                   <Badge variant={STATUS_VARIANT[doc.status] ?? "secondary"}>{doc.status}</Badge>
-                </TableCell>
-                <TableCell>{new Date(doc.created_at).toLocaleString()}</TableCell>
-                <TableCell>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={result?.loading}
-                    onClick={() => handleExtract(doc.id)}
-                  >
-                    {result?.loading ? "Extracting..." : "Extract"}
-                  </Button>
-                </TableCell>
-              </TableRow>
-              {result && (result.data || result.error) && (
-                <TableRow>
-                  <TableCell colSpan={4}>
-                    <ExtractionResultView result={result} />
-                  </TableCell>
-                </TableRow>
-              )}
-            </Fragment>
+                  {doc.status === "pending" && latest && (
+                    <span className="text-xs text-muted-foreground">
+                      {latest.stage}: {latest.status}
+                    </span>
+                  )}
+                  {doc.status === "failed" && latest?.error_message && (
+                    <span className="max-w-xs truncate text-xs text-destructive">
+                      {latest.stage} failed: {latest.error_message}
+                    </span>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell>
+                {new Date(doc.created_at).toLocaleString("en-US", { timeZone: "UTC" })}
+              </TableCell>
+            </TableRow>
           );
         })}
       </TableBody>
     </Table>
-  );
-}
-
-function ExtractionResultView({ result }: { result: ExtractionState }) {
-  if (result.error) {
-    return (
-      <Card className="border-destructive">
-        <CardContent className="pt-6 text-sm text-destructive">{result.error}</CardContent>
-      </Card>
-    );
-  }
-
-  if (!result.data) return null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Extracted data</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          {result.data.supplier_name} · {result.data.invoice_date ?? "no date"} ·{" "}
-          {result.data.total != null ? `$${result.data.total.toFixed(2)}` : "no total"}
-        </p>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Description</TableHead>
-              <TableHead>SKU</TableHead>
-              <TableHead>Qty</TableHead>
-              <TableHead>Unit price</TableHead>
-              <TableHead>Total</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {result.data.line_items.map((item, i) => (
-              <TableRow key={i}>
-                <TableCell>{item.description}</TableCell>
-                <TableCell>{item.sku ?? "—"}</TableCell>
-                <TableCell>{item.quantity}</TableCell>
-                <TableCell>${item.unit_price.toFixed(2)}</TableCell>
-                <TableCell>${item.total.toFixed(2)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
   );
 }

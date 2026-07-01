@@ -67,9 +67,9 @@ Call the vision LLM on an uploaded document and display the raw extracted result
 
 **Explicitly deferred:** Celery task chain, event log, retry/failure handling, confirm step, Invoice/LineItem promotion.
 
-**Milestone:** upload a real invoice and see structured line items extracted from it. Use this phase to tune the extraction prompt against real data before building the pipeline around it. ✅ Done — implemented in `web/src/lib/extraction.ts` using Claude (vision), tested against a real receipt.
+**Milestone:** upload a real invoice and see structured line items extracted from it. Use this phase to tune the extraction prompt against real data before building the pipeline around it. ✅ Done — implemented in `web/src/lib/extraction.ts` using Claude (vision), tested against a real receipt. Superseded in Phase 3 — this file was deleted once extraction moved into `workers/`.
 
-**Known issue to tighten before Phase 3:** on the real receipt tested, one line item's description absorbed unrelated text from elsewhere on the document (`BRCKT, CARPORT 13GA SDL HDG 6X6"` picked up a `THURSDAY DELIVERY` note that isn't part of the item description). The prompt needs to more explicitly constrain each line item's description to its own table cell before extraction moves into the Phase 3 pipeline — otherwise this kind of cross-contamination gets baked into `ExtractionResult` permanently. See the `KNOWN ISSUE` comment in `web/src/lib/extraction.ts`.
+**Known issue found and fixed:** on the real receipt tested, one line item's description absorbed unrelated text from elsewhere on the document (`BRCKT, CARPORT 13GA SDL HDG 6X6"` picked up a `THURSDAY DELIVERY` note that isn't part of the item description). Fixed by constraining each line item's description to its own table cell in the prompt — see `workers/estimator_workers/extraction.py`. Not re-verified against a real receipt with the tightened prompt yet (Phase 3 testing used the same receipt but didn't specifically re-check this line item).
 
 ---
 
@@ -88,7 +88,13 @@ Move extraction into the architecture-specified Celery task chain with event log
 
 **Explicitly deferred:** confirm step, Invoice/LineItem promotion (those come in Phase 4).
 
-**Milestone:** upload a document, watch the pipeline stages run (or fail), see `DocumentProcessingEvent` rows in the database reflecting real stage progress.
+**Milestone:** upload a document, watch the pipeline stages run (or fail), see `DocumentProcessingEvent` rows in the database reflecting real stage progress. ✅ Done — verified end-to-end against the live Supabase project and a real RabbitMQ (CloudAMQP) instance: a real receipt ran fetch → extract → parse successfully (all 3 events `succeeded`, `ExtractionResult` written, `Document.status` correctly stayed `pending`), and a PDF (unsupported type) correctly retried 3 times with linear backoff (10s/20s/30s) before terminal failure set `Document.status = failed` and the chain correctly stopped before `parse`.
+
+**Implementation notes:**
+- Next.js publishes to RabbitMQ via `celery-node`, but bypasses its high-level `Client.sendTask()`/`Task.delay()` API — that path is fire-and-forget with no way to await success or catch a connection failure. `web/src/lib/celery.ts` calls the broker directly instead so a publish failure surfaces as a thrown error to the upload action.
+- `DocumentProcessingEvent` is one row per attempt that transitions `started` → `succeeded`/`failed` (not two separate rows), since the schema's `started_at`/`finished_at` columns only make sense on a single row per attempt.
+
+**Known minor UI gap:** the frontend polling in `documents-table.tsx` only fetches `DocumentProcessingEvent` rows for currently-`pending` documents. If you land on the project page after a document has already reached a terminal state (`failed`), the status badge is correct but the specific stage/error detail text doesn't show — polling never ran for it on this page load. Not a pipeline bug; worth a follow-up if debugging failed documents becomes a real workflow.
 
 ---
 
