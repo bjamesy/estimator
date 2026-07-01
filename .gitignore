@@ -4,4 +4,7 @@
 node_modules/
 __pycache__/
 *.pyc
+*.egg-info/
+.venv/
+.next/
 .DS_Store
