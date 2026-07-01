@@ -143,13 +143,21 @@ The confirm step is intentionally minimal in MVP. A richer correction UI (editin
 
 These three subsystems were not resolved in the design session and need to be specced before implementation.
 
-### 1. Search and indexing
+### 1. Search and indexing — ✅ Resolved (Phase 6)
 
-How are confirmed line items made searchable? Options not yet evaluated:
+How confirmed line items are made searchable had not been decided. Options considered:
 - Postgres full-text search (no new infrastructure; may be sufficient for MVP query patterns)
 - A dedicated search index such as Meilisearch or Elasticsearch (more capable; more to operate)
 
-Decision needed: what query patterns does MVP search need to support, and does Postgres full-text cover them?
+**Decision: plain Postgres `ilike` matching via a single SQL function** (`search_line_items`, `database/migrations/0007_search_line_items.sql`), not `tsvector`/full-text search and not a dedicated search service. The function joins `line_items` → `invoices` → `projects`/`suppliers`, left-joins `material_matches` → `material_catalog`, and matches the query against material name, description, SKU, supplier name, and project name in one query, company-wide (not project-scoped) per the product spec's own search example.
+
+**Reasoning:**
+- At MVP scale (a single company's full purchase history — hundreds to low thousands of line items, not millions), plain `ilike` needs no index tuning to stay fast; `tsvector` columns or a dedicated search service would be solving a scale problem that doesn't exist yet.
+- The function is `security invoker` (the default), not `security definer` — it adds no scoping of its own and relies entirely on the RLS policies already enforced on every table it touches, so there was no new access-control surface to design.
+- Matching against `MaterialCatalog.name` (via the `material_matches` left join) rather than only raw `LineItem.description` is what makes Phase 5's investment pay off: searching "PT 2x8" surfaces every purchase matched to that canonical material regardless of how each supplier phrased it on the original invoice.
+- The left join (not inner join) to `material_matches`/`material_catalog` matters: a line item with no match yet (or a document confirmed before Phase 5 existed) still surfaces in search via its raw description/SKU, just without a material name — verified in testing.
+
+**Verified in testing:** searching "PT 2x8" against two confirmed invoices with overlapping PT 2x8x12/PT 2x8x16 purchases returned all 4 line items with correct canonical material names, project links, supplier, and pricing — reproducing the product spec's own canonical search example exactly. Searching a SKU directly (`PT2812`) correctly returned 3 results across all 3 confirmed invoices, including one from before Phase 5 existed (shown with no material name, confirming the left join degrades gracefully on unmatched data rather than excluding it).
 
 ### 2. Material-matching implementation — ✅ Resolved (Phase 5)
 

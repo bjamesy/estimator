@@ -147,14 +147,16 @@ Auto-match confirmed line items to the company's material catalog. Surface propo
 
 Make confirmed line items searchable across the company's full history.
 
-**Note:** the search and indexing approach is an open architecture question — see `architecture.md` → Open Questions → Search and indexing. This must be resolved before Phase 6 begins. Postgres full-text search (no new infrastructure) vs. a dedicated index like Meilisearch are the primary options.
+**Resolved:** plain Postgres `ilike` matching via a single SQL function (`search_line_items`), not full-text search or a dedicated search service. See `architecture.md` → Open Questions → Search and indexing for the full decision and reasoning.
 
-**In scope (once approach is decided):**
-- Search UI: query by material, supplier, project, SKU, or description
+**In scope:**
+- Search UI: query by material, supplier, project, SKU, or description — company-wide, not scoped to one project, per the product spec's own search example
 - Results surface: `LineItem` data (description, quantity, unit price, total) with project, invoice date, and supplier context
 - Material catalog grouping: searching "PT 2x8" should surface all confirmed line items matched to the same `MaterialCatalog` entry regardless of how the supplier described them on the invoice
 
-**Milestone:** search "PT 2x8" and get back every historical purchase of that material across all projects, with correct prices and supplier attribution.
+Also restructured `web/src/app/projects` under a new `(app)` route group (`web/src/app/(app)/projects`, `web/src/app/(app)/search`) so the nav/logout layout is shared between `/projects` and the new `/search` route instead of being duplicated. URLs are unchanged — route groups don't affect paths.
+
+**Milestone:** search "PT 2x8" and get back every historical purchase of that material across all projects, with correct prices and supplier attribution. ✅ Done — verified end-to-end against the live Supabase project: searching "PT 2x8" returned all 4 line items across 2 confirmed invoices with correct canonical material names, project links, supplier, and pricing, reproducing the product spec's own canonical example exactly. Also verified SKU search and that unmatched line items (from a document confirmed before Phase 5 existed) still surface correctly via the left join, just without a material name.
 
 ---
 
@@ -178,6 +180,6 @@ Users create estimates referencing historical line items and pricing.
 
 | Question | Blocks | Reference |
 |----------|--------|-----------|
-| Search and indexing approach | Phase 6 | `architecture.md` → Open Questions |
+| ~~Search and indexing approach~~ | ~~Phase 6~~ | ✅ Resolved — `architecture.md` → Open Questions |
 | ~~Material-matching implementation~~ | ~~Phase 5~~ | ✅ Resolved — `architecture.md` → Open Questions |
 | Estimate-building data flow + Estimate schema | Phase 7 | `architecture.md` → Open Questions, `data_model.md` → Estimate |
