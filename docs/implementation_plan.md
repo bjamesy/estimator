@@ -67,7 +67,9 @@ Call the vision LLM on an uploaded document and display the raw extracted result
 
 **Explicitly deferred:** Celery task chain, event log, retry/failure handling, confirm step, Invoice/LineItem promotion.
 
-**Milestone:** upload a real invoice and see structured line items extracted from it. Use this phase to tune the extraction prompt against real data before building the pipeline around it.
+**Milestone:** upload a real invoice and see structured line items extracted from it. Use this phase to tune the extraction prompt against real data before building the pipeline around it. ✅ Done — implemented in `web/src/lib/extraction.ts` using Claude (vision), tested against a real receipt.
+
+**Known issue to tighten before Phase 3:** on the real receipt tested, one line item's description absorbed unrelated text from elsewhere on the document (`BRCKT, CARPORT 13GA SDL HDG 6X6"` picked up a `THURSDAY DELIVERY` note that isn't part of the item description). The prompt needs to more explicitly constrain each line item's description to its own table cell before extraction moves into the Phase 3 pipeline — otherwise this kind of cross-contamination gets baked into `ExtractionResult` permanently. See the `KNOWN ISSUE` comment in `web/src/lib/extraction.ts`.
 
 ---
 
