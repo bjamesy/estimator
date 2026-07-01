@@ -9,7 +9,7 @@ No tasks are defined yet — this is Phase 0 scaffolding (Celery app + broker co
 ```bash
 python3.13 -m venv .venv
 .venv/bin/pip install -e .
-cp .env.example .env   # fill in RABBITMQ_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+cp .env.example .env   # fill in MESSAGE_BROKER_URL, SUPABASE_URL, SUPABASE_SECRET_KEY
 ```
 
 ## Run
@@ -18,4 +18,4 @@ cp .env.example .env   # fill in RABBITMQ_URL, SUPABASE_URL, SUPABASE_SERVICE_RO
 .venv/bin/celery -A estimator_workers.celery_app worker --loglevel=info
 ```
 
-Requires a reachable RabbitMQ instance (`RABBITMQ_URL`) — see Phase 0 in `docs/implementation_plan.md` for setting one up (e.g. CloudAMQP).
+Requires a reachable RabbitMQ instance (`MESSAGE_BROKER_URL`) — see Phase 0 in `docs/implementation_plan.md` for setting one up (e.g. CloudAMQP).

@@ -12,19 +12,15 @@ database/     Schema migrations -- shared source of truth for web/ and workers/
 
 ## Phase 0 Setup
 
-Currently at Phase 0 (infra and repo setup). Scaffolding for `web/` and `workers/` is done; the following external accounts still need to be created by hand:
+Phase 0 (infra and repo setup) is done: Supabase project and RabbitMQ instance are live, migrations applied, `web/.env` and `workers/.env` populated. See each directory's `.env.example` for what's expected.
 
-### 1. Supabase project
+### Supabase key naming
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. Apply the migrations in `database/migrations/` in order — see `database/README.md`.
-3. In the Supabase dashboard, enable email auth (Authentication → Providers) for company/user sign-up.
-4. Copy the project URL and keys from Project Settings → API into `web/.env` and `workers/.env` (see each directory's `.env.example`).
+Supabase's current dashboard (Project Settings → API) uses **Publishable key** and **Secret key**, not the older "anon key"/"service_role key" names you may see in older docs — that's what `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` refer to here. `SUPABASE_JWKS_URL` (Project Settings → API → JWT Keys) is captured but not wired into any code path yet.
 
-### 2. RabbitMQ
+### RabbitMQ
 
-1. Create a managed instance (e.g. [CloudAMQP](https://www.cloudamqp.com), free tier is fine for MVP).
-2. Copy the AMQP connection URL into `workers/.env` as `RABBITMQ_URL`.
+Connection string lives in `workers/.env` as `MESSAGE_BROKER_URL`.
 
 ### 3. Run locally
 
