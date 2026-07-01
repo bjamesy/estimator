@@ -17,7 +17,8 @@ Company
 │   │   └── Invoice                   (0/1:1 — promoted on confirm)
 │   │       └── LineItem              (1:N)
 │   │           └── MaterialMatch     (1:1 — links to MaterialCatalog)
-│   └── Estimate                      (fields not yet specced — see architecture.md Open Questions)
+│   └── Estimate                      (1:N)
+│       └── EstimateLine               (1:N — snapshot, optional FK back to a source LineItem)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
@@ -202,4 +203,31 @@ Company-specific data about a supplier relationship. Company-scoped, unlike `Sup
 
 ## Estimate
 
-Fields not yet specced. References `LineItem` records as historical sources — the exact shape of that reference (snapshot vs. live link) and where markup/inflation adjustments live is an open question. See `architecture.md` → Open Questions → Estimate-building data flow.
+```
+Estimate
+  id
+  project_id      FK → Project
+  company_id      FK → Company
+  name            e.g. "Initial Estimate", "Rev 2"
+  created_at
+```
+
+Scoped to a project. No lifecycle/status field in MVP — an estimate is always an editable draft; there is no finalize/send step.
+
+## EstimateLine
+
+```
+EstimateLine
+  id
+  estimate_id          FK → Estimate
+  company_id           FK → Company
+  source_line_item_id  FK → LineItem, nullable — provenance only, never re-read after creation
+  description          text — copied from the source LineItem, or entered manually if source_line_item_id is null
+  quantity
+  unit_price
+  markup_percent        default 0
+  total                 quantity * unit_price * (1 + markup_percent / 100), recalculated on edit
+  created_at
+```
+
+A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.

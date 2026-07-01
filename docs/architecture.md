@@ -179,9 +179,15 @@ The approach that powers automatic catalog matching had not been chosen. Options
 
 **Known limitation carried forward:** no confidence threshold or fallback — every line item gets a `proposed` match, right or wrong, and the only human check is post-hoc flagging. If this proves too noisy in practice, a hybrid approach (e.g. fuzzy pre-filter, LLM only for ambiguous cases) is the natural next step, not a redesign.
 
-### 3. Estimate-building data flow
+### 3. Estimate-building data flow — ✅ Resolved (Phase 7)
 
-How estimates are structured, stored, and linked to historical line items has not been specced. Key questions:
-- What does an Estimate record contain, and what is its relationship to LineItems?
-- How does referencing a historical line item work — is it a snapshot of the price at reference time, or a live link?
-- Where do markup/inflation adjustments live — on the estimate line, on the estimate itself, or as a separate config?
+How estimates are structured, stored, and linked to historical line items had not been specced.
+
+**Decision: snapshot, not a live link.** Pulling a historical `LineItem` into an estimate copies its `description`/`quantity`/`unit_price` into a new `EstimateLine` row. `EstimateLine.source_line_item_id` keeps a nullable FK back to the original purely for provenance ("this line came from that historical purchase") — it is never re-read after creation. `EstimateLine` also supports no source at all, for a manually-added line.
+
+**Reasoning:**
+- Consistent with the snapshot pattern already used everywhere else in the system: `ExtractionResult` → `Invoice`/`LineItem` promotion is a one-time copy, not a live reference either. Estimates get the same treatment.
+- "The estimate remains fully editable" (`product-mvp.md` → Build Estimates) only makes sense if an estimate line is independent of its source the moment it's added — a live link would mean editing the estimate line's price doesn't actually mean anything, or worse, editing the *source* `LineItem` retroactively changes past estimates.
+- A live link also has a real failure mode a snapshot avoids: if the source line item's material match is later flagged wrong (Phase 5) or the underlying document is somehow found to be bad, that shouldn't silently mutate an estimate a contractor already sent to a client.
+
+**Markup/inflation adjustment lives per-line**: `EstimateLine.markup_percent` (default 0), not an estimate-level global field and not a separate config table. Simplest field that still supports a blanket rate across an estimate if the user sets the same value on every line; an estimate-level default can be added later without a schema change if that turns out to be a common enough workflow to warrant a UI shortcut.

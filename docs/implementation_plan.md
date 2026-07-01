@@ -1,6 +1,6 @@
 # Implementation Plan
 
-**Status:** Approved 2026-06-30. Phases reflect the decisions in [architecture.md](./architecture.md) and [data_model.md](./data_model.md). Product scope is defined in [product-mvp.md](./product-mvp.md).
+**Status:** Approved 2026-06-30. All phases (0–7) implemented and verified end-to-end against a live Supabase project as of 2026-07-01. Phases reflect the decisions in [architecture.md](./architecture.md) and [data_model.md](./data_model.md). Product scope is defined in [product-mvp.md](./product-mvp.md).
 
 ---
 
@@ -164,15 +164,17 @@ Also restructured `web/src/app/projects` under a new `(app)` route group (`web/s
 
 Users create estimates referencing historical line items and pricing.
 
-**Note:** the estimate-building data flow is an open architecture question — see `architecture.md` → Open Questions → Estimate-building data flow. The `Estimate` schema in `data_model.md` is currently unspecced. This must be resolved before Phase 7 begins. Key decisions: snapshot vs. live link to historical `LineItem` records, and where markup/inflation adjustments live.
+**Resolved:** snapshot, not a live link — pulling a historical `LineItem` into an estimate copies its data into a new `EstimateLine`, with a nullable `source_line_item_id` FK kept for provenance only. Markup lives per-line (`EstimateLine.markup_percent`). See `architecture.md` → Open Questions → Estimate-building data flow, and `data_model.md` → Estimate / EstimateLine, for the full decision and reasoning.
 
-**In scope (once data flow is decided):**
+**In scope:**
 - Estimate creation: new estimate scoped to a project
-- Historical reference: search and pull in historical line items as estimate lines
-- Markup/inflation adjustments: configurable per product spec (`product-mvp.md` → Build Estimates)
-- Estimate remains fully editable after historical data is pulled in
+- Historical reference: search (reusing Phase 6's `search_line_items`) and pull in historical line items as estimate lines
+- Markup/inflation adjustments: per-line `markup_percent`, recalculated into `total` on edit
+- Estimate remains fully editable after historical data is pulled in — including manually-added blank lines and removing lines
 
-**Milestone:** create an estimate for a new project, pull in historical PT 2x8 pricing from a past job, apply a markup, and produce an editable estimate line.
+**Milestone:** create an estimate for a new project, pull in historical PT 2x8 pricing from a past job, apply a markup, and produce an editable estimate line. ✅ Done — verified end-to-end against the live Supabase project: created a new project ("Johnson Garage") and estimate, searched "PT 2x8", pulled in the historical `PT 2x8x12` line (75 @ $28.99, exactly matching the source), applied a 20% markup, and confirmed the total recalculated correctly ($2,609.10 = 75 × 28.99 × 1.20). Confirmed via direct query that the source `LineItem`'s price was untouched by the markup — the snapshot decision holds. Also verified adding and removing a blank line.
+
+Also fixed a controlled/uncontrolled input console warning found during testing, same root cause as Phase 6's fix but different resolution: since `EstimateLine` fields *should* reflect fresh server data after a save (unlike the search box), the fix is keying each row on `${line.id}-${line.total}` to force a clean remount when data changes, rather than removing `defaultValue` outright.
 
 ---
 
@@ -182,4 +184,6 @@ Users create estimates referencing historical line items and pricing.
 |----------|--------|-----------|
 | ~~Search and indexing approach~~ | ~~Phase 6~~ | ✅ Resolved — `architecture.md` → Open Questions |
 | ~~Material-matching implementation~~ | ~~Phase 5~~ | ✅ Resolved — `architecture.md` → Open Questions |
-| Estimate-building data flow + Estimate schema | Phase 7 | `architecture.md` → Open Questions, `data_model.md` → Estimate |
+| ~~Estimate-building data flow + Estimate schema~~ | ~~Phase 7~~ | ✅ Resolved — `architecture.md` → Open Questions, `data_model.md` → Estimate |
+
+All phases (0–7) are now complete. All three open architecture questions are resolved.
