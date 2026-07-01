@@ -1,0 +1,169 @@
+# Architecture
+
+**Status:** Draft — decisions recorded through 2026-06-30 design session. Three subsystems flagged as open questions at the bottom.
+
+Related: [Product Spec](./product-mvp.md), [Data Model](./data_model.md)
+
+---
+
+## System Overview
+
+Estimator is a document-ingestion and search product. Its core flow is:
+
+```
+Upload document
+    → store original (permanent)
+    → extract structured data via vision LLM (async pipeline)
+    → user reviews and confirms extracted data
+    → confirmed line items enter the searchable historical knowledge base
+    → material catalog matching surfaces groupings for user review
+    → confirmed history is used to build estimates
+```
+
+---
+
+## Stack
+
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Web app | Next.js (TypeScript) | Frontend + server-side API routes |
+| Async workers | Python + Celery | Extraction pipeline; runs as a separate service |
+| Message broker | RabbitMQ | Chosen over Redis for durable queue semantics and reliable ack/nack in multi-stage pipelines; run managed (e.g. CloudAMQP) |
+| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent` and `ExtractionResult`; Next.js owns `Invoice`, `LineItem`, and `Document.status` transitions (worker writes only the terminal `failed` status) |
+| File storage | Supabase Storage | S3-compatible; used for original documents; avoids a second storage vendor |
+| Extraction | Vision LLM (e.g. GPT-4o or Claude) | Single API call per document; returns structured JSON |
+
+The web app and Python worker service are separate deployments sharing one Postgres database. The worker's deployment shape (long-lived container vs. serverless functions) is an implementation-time decision; the architecture does not lock it down.
+
+---
+
+## Company Scoping
+
+All data is company-scoped; there is no cross-company sharing in MVP (see `product-mvp.md`). Enforcement:
+
+- **Postgres:** Supabase Row Level Security (RLS) policies on every table, scoped by `company_id`. This is the primary enforcement boundary — both Next.js and the Python worker query through it, so a bug in either codebase's filtering logic can't leak cross-company data.
+- **Celery task payload:** every task carries `company_id` alongside `document_id`, so a worker scoping a lookup (e.g. a MaterialCatalog match) has it available without a join back through Document.
+- **Next.js API routes:** scope all queries by the authenticated user's `company_id` in addition to relying on RLS — defense in depth, not a substitute for it.
+
+**Exception:** `Supplier` is a deliberate, global, non-company-scoped table — see Data Model below. It carries no `company_id` and is intentionally outside RLS. Anything company-specific about a supplier relationship lives on `CompanySupplier`, which is company-scoped like everything else.
+
+---
+
+## Document Storage
+
+Original documents are written to Supabase Storage on upload and never modified or deleted. The storage path is recorded on the Document record. Structured data is always derived from originals; originals are the source of truth.
+
+---
+
+## Extraction Pipeline
+
+The extraction pipeline runs as a chain of Celery tasks. Each stage is a discrete task: for example, `fetch` (retrieve file from Supabase Storage) → `extract` (call vision LLM) → `parse` (structure LLM response into ExtractionResult).
+
+### Progress tracking: DocumentProcessingEvent
+
+The pipeline never writes to `Document.status`. Fine-grained progress lives entirely in an append-only `DocumentProcessingEvent` table. Each stage attempt — including every Celery retry — inserts its own row.
+
+```
+DocumentProcessingEvent
+  id
+  document_id       FK → Document
+  stage             e.g. "fetch" | "extract" | "parse"
+  status            "started" | "succeeded" | "failed"
+  error_message     null on success; populated on failure
+  attempt_number    increments per retry within a stage
+  started_at
+  finished_at
+```
+
+The frontend determines pipeline state by querying the latest event row(s) for a document. If the final stage (e.g. `parse`) has a `succeeded` row, extraction is complete and the confirmation screen is shown. Otherwise a progress indicator is shown based on the latest event.
+
+### Retry and failure
+
+Celery handles retries automatically with backoff on transient failures. If a stage exceeds its configured retry limit, it inserts a `failed` event row and the job is considered terminally failed. There is no manual retry from the UI. The user's only path after terminal failure is re-uploading the document.
+
+Re-uploading creates a new `Document` record (new `document_id`, new pipeline run) rather than reusing the failed one. The failed `Document` and its `DocumentProcessingEvent` history are left in place as a record of what happened. This also means a stale in-flight task from a failed run can never write results against a document the user has since replaced — it can only ever write against its own `document_id`, which stays terminally `failed`.
+
+---
+
+## Document Status
+
+`Document.status` is coarse-grained and reflects only terminal outcomes. The pipeline never writes intermediate status to it — the one exception is terminal failure, which the worker sets directly.
+
+| Status | Set by | Meaning |
+|--------|--------|---------|
+| `pending` | Next.js at document creation | Document uploaded; pipeline running or extraction complete but not yet confirmed |
+| `failed` | Celery worker on terminal failure | Pipeline failed unrecoverably |
+| `confirmed` | Next.js on user confirm action | User has reviewed and confirmed extracted data |
+
+`pending` covers the entire window from upload through extraction completion. The distinction between "pipeline still running" and "ready for user review" is determined by querying DocumentProcessingEvent, not by Document.status.
+
+---
+
+## ExtractionResult and the Confirm Step
+
+When the final pipeline stage succeeds, it writes to an `ExtractionResult` table:
+
+```
+ExtractionResult
+  id
+  document_id       FK → Document
+  payload           structured JSON (invoice metadata + line items as extracted)
+  created_at
+```
+
+The Python worker owns the shape of this output. `ExtractionResult` is the surface the user reviews during the confirm step — the Next.js API reads from it to render the confirmation screen.
+
+`ExtractionResult` rows are retained permanently, even after promotion to `Invoice`/`LineItem`. It's the durable record of raw vision LLM output per document, independent of the confirmed record's lifecycle.
+
+When the user confirms, Next.js:
+1. Validates the ExtractionResult payload
+2. Promotes it into canonical `Invoice` and `LineItem` records
+3. Sets `Document.status = confirmed`
+
+Next.js owns the promotion and validation logic. Schema changes to `Invoice` or `LineItem` only require updates to the Next.js promotion code, not to the Python worker.
+
+The confirm step is intentionally minimal in MVP. A richer correction UI (editing individual fields before confirming) is post-MVP.
+
+---
+
+## Upload-to-Pipeline Handoff
+
+1. User uploads a file via the Next.js API route
+2. Next.js writes the original to Supabase Storage
+3. Next.js creates a `Document` record with `status = pending` and records the storage path
+4. Next.js publishes a Celery task to RabbitMQ containing the `document_id`, `company_id`, and storage path
+5. Python worker picks up the task, begins the pipeline stage chain
+6. On terminal success: worker writes `ExtractionResult`, inserts final `DocumentProcessingEvent` with `status = succeeded`
+7. On terminal failure: worker sets `Document.status = failed`, inserts final `DocumentProcessingEvent` with `status = failed`
+8. Frontend polls by querying `DocumentProcessingEvent` to render live progress; reads `ExtractionResult` on completion
+
+---
+
+## Open Questions
+
+These three subsystems were not resolved in the design session and need to be specced before implementation.
+
+### 1. Search and indexing
+
+How are confirmed line items made searchable? Options not yet evaluated:
+- Postgres full-text search (no new infrastructure; may be sufficient for MVP query patterns)
+- A dedicated search index such as Meilisearch or Elasticsearch (more capable; more to operate)
+
+Decision needed: what query patterns does MVP search need to support, and does Postgres full-text cover them?
+
+### 2. Material-matching implementation
+
+The approach that powers automatic catalog matching has not been chosen. Options:
+- Fuzzy string matching (e.g. trigram similarity in Postgres, or a library like RapidFuzz in Python)
+- Embeddings (semantic similarity; requires an embedding model and vector storage)
+- LLM call (flexible; higher cost per match; least deterministic)
+- Hybrid (fuzzy first, LLM for low-confidence cases)
+
+This decision matters for MVP given matching was pulled into scope specifically because raw-text search doesn't reliably surface the same material across different supplier phrasings ("PT 2x8 KD", "Pressure Treated 2x8", "PT Lumber 2x8"). The chosen approach needs to handle supplier abbreviations and variant descriptions with reasonable recall.
+
+### 3. Estimate-building data flow
+
+How estimates are structured, stored, and linked to historical line items has not been specced. Key questions:
+- What does an Estimate record contain, and what is its relationship to LineItems?
+- How does referencing a historical line item work — is it a snapshot of the price at reference time, or a live link?
+- Where do markup/inflation adjustments live — on the estimate line, on the estimate itself, or as a separate config?
