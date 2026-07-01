@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { publishMatchMaterialsTask } from "@/lib/celery";
 import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
 
@@ -125,6 +126,16 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
     return {
       error: `Invoice created, but failed to mark document confirmed: ${statusError.message}`,
     };
+  }
+
+  // Best-effort: the confirm itself already succeeded (Invoice/LineItem
+  // exist, Document is confirmed). A publish failure here just means
+  // material matching never runs for this invoice -- worth surfacing, but
+  // not worth failing an otherwise-successful confirm over.
+  try {
+    await publishMatchMaterialsTask(invoice.id, document.company_id);
+  } catch {
+    // Swallowed intentionally -- see comment above.
   }
 
   revalidatePath(`/projects/${document.project_id}`);

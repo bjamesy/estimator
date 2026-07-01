@@ -151,15 +151,25 @@ How are confirmed line items made searchable? Options not yet evaluated:
 
 Decision needed: what query patterns does MVP search need to support, and does Postgres full-text cover them?
 
-### 2. Material-matching implementation
+### 2. Material-matching implementation — ✅ Resolved (Phase 5)
 
-The approach that powers automatic catalog matching has not been chosen. Options:
+The approach that powers automatic catalog matching had not been chosen. Options considered:
 - Fuzzy string matching (e.g. trigram similarity in Postgres, or a library like RapidFuzz in Python)
 - Embeddings (semantic similarity; requires an embedding model and vector storage)
 - LLM call (flexible; higher cost per match; least deterministic)
 - Hybrid (fuzzy first, LLM for low-confidence cases)
 
-This decision matters for MVP given matching was pulled into scope specifically because raw-text search doesn't reliably surface the same material across different supplier phrasings ("PT 2x8 KD", "Pressure Treated 2x8", "PT Lumber 2x8"). The chosen approach needs to handle supplier abbreviations and variant descriptions with reasonable recall.
+**Decision: a single batched LLM call (Claude) per confirmed invoice**, run in `workers/` (`estimator_workers/matching.py` + the `match_materials` Celery task), triggered by the confirm action after promotion — not blocking it. One call handles every line item on the invoice against the company's full `MaterialCatalog` at once, rather than one call per line item.
+
+**Reasoning:**
+- Claude was already proven during Phase 2/3 extraction testing to correctly interpret supplier abbreviations (e.g. reading "CNCRTE" as concrete) — the exact recall problem this decision needed to solve.
+- A per-company material catalog is small (dozens to low hundreds of entries for an MVP-stage company), so batching the whole catalog + all line items into one prompt stays fast and cheap — no need for approximate/indexed search over a large corpus, which is what fuzzy matching and embeddings are for.
+- Avoids introducing a new dependency. Embeddings would have required a vector store (e.g. pgvector) and an embeddings provider (Anthropic has no embeddings endpoint of its own); fuzzy matching would have needed a new library or Postgres extension. An LLM call reuses the Anthropic integration already wired into `workers/`.
+- Matching runs after confirmation, not during extraction, per the product principle that "confirm what was actually purchased" and "the system does its catalog grouping" are separate concerns — see the `MaterialMatch` section below.
+
+**Verified in testing:** confirming a second invoice with overlapping materials correctly matched all line items to the *existing* `MaterialCatalog` rows created by the first invoice (zero duplicate catalog entries), while a first-ever invoice for a company correctly created new entries. The LLM also made a reasonable catalog-granularity judgment call unprompted — treating different lumber lengths (e.g. "PT 2x8x12" vs "PT 2x8x16") as distinct materials rather than collapsing them, which aligns with "historical accuracy over categorization" in `product-mvp.md` since they have genuinely different prices.
+
+**Known limitation carried forward:** no confidence threshold or fallback — every line item gets a `proposed` match, right or wrong, and the only human check is post-hoc flagging. If this proves too noisy in practice, a hybrid approach (e.g. fuzzy pre-filter, LLM only for ambiguous cases) is the natural next step, not a redesign.
 
 ### 3. Estimate-building data flow
 

@@ -10,6 +10,7 @@ from estimator_workers.extraction import (
     call_vision_llm,
     parse_extraction_json,
 )
+from estimator_workers.matching import match_line_items_to_catalog
 from estimator_workers.supabase_client import get_supabase
 
 MAX_RETRIES = 3
@@ -97,3 +98,64 @@ def process_document(document_id: str, company_id: str, storage_path: str) -> No
         extract.s(document_id, company_id, storage_path),
         parse.s(document_id, company_id, storage_path),
     ).apply_async()
+
+
+# Runs after user confirmation, not during extraction -- keeps "confirm what
+# was actually purchased" separate from "system does its catalog grouping".
+# See docs/architecture.md -> MaterialMatch. No DocumentProcessingEvent
+# equivalent here (that table is specifically the fetch/extract/parse
+# pipeline); retry is simpler and unlogged.
+@app.task(bind=True, name="estimator_workers.tasks.match_materials", max_retries=MAX_RETRIES)
+def match_materials(self: Task, invoice_id: str, company_id: str) -> None:
+    try:
+        supabase = get_supabase()
+
+        line_items = (
+            supabase.table("line_items")
+            .select("id, description")
+            .eq("invoice_id", invoice_id)
+            .execute()
+            .data
+        )
+        if not line_items:
+            return
+
+        catalog = (
+            supabase.table("material_catalog")
+            .select("id, name")
+            .eq("company_id", company_id)
+            .execute()
+            .data
+        )
+        catalog_ids = {m["id"] for m in catalog}
+
+        result = match_line_items_to_catalog(line_items, catalog)
+
+        rows = []
+        for match in result.matches:
+            if match.matched_material_id and match.matched_material_id in catalog_ids:
+                material_id = match.matched_material_id
+            else:
+                name = match.new_material_name or "Unknown material"
+                new_material = (
+                    supabase.table("material_catalog")
+                    .insert({"company_id": company_id, "name": name})
+                    .execute()
+                    .data[0]
+                )
+                material_id = new_material["id"]
+                catalog_ids.add(material_id)
+
+            rows.append(
+                {"line_item_id": match.line_item_id, "material_id": material_id, "status": "proposed"}
+            )
+
+        if rows:
+            supabase.table("material_matches").insert(rows).execute()
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            # No Document/status equivalent to flip -- matching failure just
+            # means no MaterialMatch rows exist yet. The confirmed
+            # Invoice/LineItem records are unaffected either way.
+            raise
+        raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))

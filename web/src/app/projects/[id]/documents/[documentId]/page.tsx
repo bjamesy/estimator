@@ -14,6 +14,7 @@ import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
 
 import { ConfirmButton } from "./confirm-button";
+import { MaterialMatches } from "./material-matches";
 
 export default async function DocumentReviewPage({
   params,
@@ -44,6 +45,40 @@ export default async function DocumentReviewPage({
   const parsed = extractionResult
     ? extractionPayloadSchema.safeParse(extractionResult.payload)
     : null;
+
+  let lineItems: { id: string; description: string }[] = [];
+  let initialMatches: { id: string; line_item_id: string; status: string; material_name: string }[] = [];
+  if (document.status === "confirmed") {
+    const { data: invoice } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("document_id", documentId)
+      .single();
+
+    if (invoice) {
+      const { data: items } = await supabase
+        .from("line_items")
+        .select("id, description")
+        .eq("invoice_id", invoice.id);
+      lineItems = items ?? [];
+
+      if (lineItems.length > 0) {
+        const { data: matches } = await supabase
+          .from("material_matches")
+          .select("id, line_item_id, status, material_catalog(name)")
+          .in(
+            "line_item_id",
+            lineItems.map((li) => li.id),
+          );
+        initialMatches = (matches ?? []).map((m) => ({
+          id: m.id,
+          line_item_id: m.line_item_id,
+          status: m.status,
+          material_name: (m.material_catalog as unknown as { name: string } | null)?.name ?? "—",
+        }));
+      }
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -103,9 +138,19 @@ export default async function DocumentReviewPage({
             <ConfirmButton documentId={document.id} projectId={projectId} />
           )}
           {document.status === "confirmed" && (
-            <p className="text-sm text-muted-foreground">
-              Confirmed -- promoted into the searchable historical record.
-            </p>
+            <>
+              <p className="text-sm text-muted-foreground">
+                Confirmed -- promoted into the searchable historical record.
+              </p>
+              {lineItems.length > 0 && (
+                <MaterialMatches
+                  projectId={projectId}
+                  documentId={document.id}
+                  lineItems={lineItems}
+                  initialMatches={initialMatches}
+                />
+              )}
+            </>
           )}
         </>
       )}

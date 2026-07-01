@@ -123,18 +123,23 @@ Users review extracted data and confirm it. Confirmed data is promoted into the 
 
 Auto-match confirmed line items to the company's material catalog. Surface proposed matches for user review; allow flagging wrong matches.
 
-**Note:** the implementation approach for matching is an open architecture question — see `architecture.md` → Open Questions → Material-matching implementation. This question must be resolved before Phase 5 begins. Options range from Postgres trigram similarity to embeddings to an LLM call; the choice affects both the workers/ code and whether any new infrastructure (vector store) is needed.
+**Resolved:** matching uses a single batched LLM call (Claude) per confirmed invoice, run in `workers/`. See `architecture.md` → Open Questions → Material-matching implementation for the full decision and reasoning.
 
-**In scope (once approach is decided):**
+**In scope:**
 - `MaterialCatalog` management (company-scoped canonical materials)
-- Auto-matching: runs after user confirmation, proposes `MaterialMatch` records linking `LineItem` to `MaterialCatalog` entries
+- Auto-matching: runs after user confirmation (triggered by the confirm action, not blocking it), proposes `MaterialMatch` records linking `LineItem` to `MaterialCatalog` entries
 - `MaterialMatch.status`: `proposed` (auto-matched, unreviewed) or `flagged` (user rejected the match)
 - UI: surface proposed matches per confirmed invoice; allow user to flag incorrect matches
 - Flagging never changes `LineItem.description`, `Document.status`, or the original document — it only changes `MaterialMatch.status`
 
 **Explicitly deferred:** using material matches as a search grouping layer (that's search, Phase 6).
 
-**Milestone:** confirm an invoice and see line items auto-matched to catalog entries, with the ability to flag a wrong match.
+**Milestone:** confirm an invoice and see line items auto-matched to catalog entries, with the ability to flag a wrong match. ✅ Done — verified end-to-end against the live Supabase project across two separate confirmed invoices from the same receipt:
+- First invoice (empty catalog): all 13 line items correctly created new `MaterialCatalog` entries with sensible canonical names (e.g. "P.T. 2 X 8 X 12' K.D. #2 & BTR NET" → "PT 2x8x12").
+- Second invoice (populated catalog): all 13 line items correctly matched to the *existing* catalog rows from the first invoice — zero duplicates created, confirmed by identical `material_id` values across both invoices for the same materials.
+- Flag action verified: flagging a match updates only `MaterialMatch.status`, confirmed via direct query that `LineItem.description` and `Document.status` were untouched.
+
+**Not yet tested:** matching quality when a company's catalog contains a genuinely ambiguous or incorrect entry (e.g. does the LLM ever confidently mismatch two different materials). Only tested with a clean, uncontested catalog so far.
 
 ---
 
@@ -174,5 +179,5 @@ Users create estimates referencing historical line items and pricing.
 | Question | Blocks | Reference |
 |----------|--------|-----------|
 | Search and indexing approach | Phase 6 | `architecture.md` → Open Questions |
-| Material-matching implementation | Phase 5 | `architecture.md` → Open Questions |
+| ~~Material-matching implementation~~ | ~~Phase 5~~ | ✅ Resolved — `architecture.md` → Open Questions |
 | Estimate-building data flow + Estimate schema | Phase 7 | `architecture.md` → Open Questions, `data_model.md` → Estimate |
