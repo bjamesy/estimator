@@ -37,10 +37,23 @@ Explicitly out of scope for MVP:
 ## Product Principles
 
 - **Documents are source of truth.** Structured data is always derived from originals; originals are always retained.
-- **Historical accuracy over categorization.** Store what was actually purchased; don't try to normalize or predict.
+- **Historical accuracy over categorization.** Store what was actually purchased. Material matching (grouping line items under a canonical material) is automatic but never silent — matches are always visible and correctable, and a flagged match never changes the underlying line item or original document.
 - **Company-scoped.** All data belongs to one company — no cross-company sharing in MVP.
 - **Progressive value.** Every uploaded invoice increases the value of the system; the product compounds through normal business activity.
 
+## Repo Structure
+
+```
+web/          Next.js (TypeScript) app -- frontend, server actions, Celery task publisher
+workers/      Python + Celery -- extraction pipeline (vision LLM) and material matching (batched LLM call)
+database/     Postgres migrations -- canonical schema source, applied to Supabase
+docs/         product-mvp.md, architecture.md, data_model.md, implementation_plan.md
+```
+
+Both `web/` and `workers/` need to be running for uploads/confirms to actually process end to end — see the root `README.md`.
+
 ## Current State
 
-Early pre-code stage. `docs/product-mvp.md` contains the full product specification. No application code exists yet.
+MVP complete. All phases (0–7) of `docs/implementation_plan.md` are implemented and verified end-to-end against a live Supabase project: auth/company creation → project + document upload → vision LLM extraction → user confirm → promotion into the historical record → material matching → company-wide search → estimates with historical pricing and markup.
+
+`docs/architecture.md` and `docs/data_model.md` are the current source of truth for system design and schema; both were kept up to date as each phase was built, including the reasoning behind the three decisions that were originally open questions (search approach, material-matching approach, estimate data flow).

@@ -2,7 +2,7 @@
 
 Standalone reference for Estimator's current data model — every entity, its fields, and how tables relate. This is the source of truth for schema; `architecture.md` describes process/pipeline behavior and embeds a couple of these schemas inline where useful for that narrative (`DocumentProcessingEvent`, `ExtractionResult`, `Document.status`), but this document reflects their current state too.
 
-Related: [Architecture](./architecture.md), [Product Spec](./product-mvp.md)
+Related: [Architecture](./architecture.md), [Product Spec](./product-mvp.md), [Implementation Plan](./implementation_plan.md)
 
 ---
 
@@ -181,7 +181,7 @@ Supplier
 
 Global entity — the one deliberate exception to company scoping. A supplier like Hill's Home Building Centre is the same real-world business regardless of which company is buying from it, so it's one shared record rather than duplicated per company. Holds only public business identity — never pricing, notes, or anything proprietary to one company's relationship with it. No `company_id`; intentionally outside RLS.
 
-Because any company's user could otherwise create near-duplicate suppliers ("Hill's Home Building Centre" vs "Hills Home Building Center"), Supplier creation during invoice extraction needs the same auto-match-and-confirm treatment as materials — folded into the open material-matching question in `architecture.md`, not a separate mechanism.
+**As actually implemented (Phase 4):** supplier resolution on confirm is a simple case-insensitive exact-name match (`ilike`) against existing `Supplier` rows — not the LLM-based approach material matching ended up using in Phase 5. This means variant phrasings ("Hill's Home Building Centre" vs "Hills Home Building Center") will create near-duplicate `Supplier` rows rather than being recognized as the same business. Known, documented limitation — see `implementation_plan.md` → Phase 4 "Not yet tested." Applying the same LLM-matching treatment used for materials is the natural fix if this proves to be a real problem in practice.
 
 ---
 

@@ -1,8 +1,8 @@
 # Architecture
 
-**Status:** Draft — decisions recorded through 2026-06-30 design session. Three subsystems flagged as open questions at the bottom.
+**Status:** Implemented. All phases (0–7) of `implementation_plan.md` are complete and verified end-to-end against a live Supabase project as of 2026-07-01. The three subsystems originally flagged as open questions (search, material matching, estimates) are resolved — see the bottom of this document for each decision and its reasoning.
 
-Related: [Product Spec](./product-mvp.md), [Data Model](./data_model.md)
+Related: [Product Spec](./product-mvp.md), [Data Model](./data_model.md), [Implementation Plan](./implementation_plan.md)
 
 ---
 
@@ -17,7 +17,8 @@ Upload document
     → user reviews and confirms extracted data
     → confirmed line items enter the searchable historical knowledge base
     → material catalog matching surfaces groupings for user review
-    → confirmed history is used to build estimates
+    → company-wide search surfaces historical purchases (Phase 6)
+    → confirmed history is used to build estimates (Phase 7, snapshot-based)
 ```
 
 ---
@@ -29,9 +30,9 @@ Upload document
 | Web app | Next.js (TypeScript) | Frontend + server-side API routes |
 | Async workers | Python + Celery | Extraction pipeline; runs as a separate service |
 | Message broker | RabbitMQ | Chosen over Redis for durable queue semantics and reliable ack/nack in multi-stage pipelines; run managed (e.g. CloudAMQP) |
-| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent` and `ExtractionResult`; Next.js owns `Invoice`, `LineItem`, and `Document.status` transitions (worker writes only the terminal `failed` status) |
+| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent`, `ExtractionResult`, and `MaterialMatch`/`MaterialCatalog` (via the `match_materials` task); Next.js owns `Invoice`, `LineItem`, `Estimate`/`EstimateLine`, and `Document.status` transitions (worker writes only the terminal `failed` status) |
 | File storage | Supabase Storage | S3-compatible; used for original documents; avoids a second storage vendor |
-| Extraction | Vision LLM (e.g. GPT-4o or Claude) | Single API call per document; returns structured JSON |
+| Extraction & matching | Claude (`claude-sonnet-5`), via Anthropic's API | One vision call per document for extraction (`workers/estimator_workers/extraction.py`); one batched text call per confirmed invoice for material matching (`workers/estimator_workers/matching.py`) |
 
 The web app and Python worker service are separate deployments sharing one Postgres database. The worker's deployment shape (long-lived container vs. serverless functions) is an implementation-time decision; the architecture does not lock it down.
 
@@ -139,9 +140,9 @@ The confirm step is intentionally minimal in MVP. A richer correction UI (editin
 
 ---
 
-## Open Questions
+## Open Questions (Resolved)
 
-These three subsystems were not resolved in the design session and need to be specced before implementation.
+These three subsystems were not resolved in the original design session. All three are now resolved and implemented — kept here for the decision history and reasoning, not as outstanding work.
 
 ### 1. Search and indexing — ✅ Resolved (Phase 6)
 
@@ -173,7 +174,7 @@ The approach that powers automatic catalog matching had not been chosen. Options
 - Claude was already proven during Phase 2/3 extraction testing to correctly interpret supplier abbreviations (e.g. reading "CNCRTE" as concrete) — the exact recall problem this decision needed to solve.
 - A per-company material catalog is small (dozens to low hundreds of entries for an MVP-stage company), so batching the whole catalog + all line items into one prompt stays fast and cheap — no need for approximate/indexed search over a large corpus, which is what fuzzy matching and embeddings are for.
 - Avoids introducing a new dependency. Embeddings would have required a vector store (e.g. pgvector) and an embeddings provider (Anthropic has no embeddings endpoint of its own); fuzzy matching would have needed a new library or Postgres extension. An LLM call reuses the Anthropic integration already wired into `workers/`.
-- Matching runs after confirmation, not during extraction, per the product principle that "confirm what was actually purchased" and "the system does its catalog grouping" are separate concerns — see the `MaterialMatch` section below.
+- Matching runs after confirmation, not during extraction, per the product principle that "confirm what was actually purchased" and "the system does its catalog grouping" are separate concerns — see `data_model.md` → MaterialMatch.
 
 **Verified in testing:** confirming a second invoice with overlapping materials correctly matched all line items to the *existing* `MaterialCatalog` rows created by the first invoice (zero duplicate catalog entries), while a first-ever invoice for a company correctly created new entries. The LLM also made a reasonable catalog-granularity judgment call unprompted — treating different lumber lengths (e.g. "PT 2x8x12" vs "PT 2x8x16") as distinct materials rather than collapsing them, which aligns with "historical accuracy over categorization" in `product-mvp.md` since they have genuinely different prices.
 

@@ -11,8 +11,9 @@ Monorepo with three top-level directories:
 ```
 /
 ├── web/          Next.js app (TypeScript) — frontend and server-side API routes
-├── workers/      Python + Celery worker service — extraction pipeline
-└── database/     Schema migrations and seed data — shared source of truth
+├── workers/      Python + Celery worker service — extraction pipeline and material matching
+├── database/     Schema migrations and seed data — shared source of truth
+└── docs/         product-mvp.md, architecture.md, data_model.md, implementation_plan.md (this file)
 ```
 
 `database/` is the canonical home for all Postgres migrations. Both `web/` and `workers/` are consumers of that schema — neither owns migrations directly. Any schema change lands in `database/` first and both services are updated against it.
