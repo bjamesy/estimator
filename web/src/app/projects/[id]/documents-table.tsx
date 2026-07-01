@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 type Document = {
   id: string;
@@ -27,39 +30,61 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = 
 
 const POLL_INTERVAL_MS = 2000;
 
-export function DocumentsTable({ documents: initialDocuments }: { documents: Document[] }) {
+export function DocumentsTable({
+  projectId,
+  documents: initialDocuments,
+  readyForReview: initialReadyForReview,
+}: {
+  projectId: string;
+  documents: Document[];
+  readyForReview: string[];
+}) {
   const [documents, setDocuments] = useState(initialDocuments);
+  const [readyForReview, setReadyForReview] = useState(new Set(initialReadyForReview));
   const [latestEvents, setLatestEvents] = useState<Record<string, LatestEvent>>({});
 
-  // initialDocuments is a fresh array every time the parent Server
-  // Component re-renders (e.g. after revalidatePath on upload) -- useState's
-  // initializer only runs on mount, so without this the table would never
-  // show newly uploaded documents until a full page reload.
+  // initialDocuments/initialReadyForReview are fresh every time the parent
+  // Server Component re-renders (e.g. after revalidatePath on upload) --
+  // useState's initializer only runs on mount, so without this the table
+  // would never reflect new uploads or newly-ready documents until a full
+  // page reload.
   useEffect(() => {
     setDocuments(initialDocuments);
-  }, [initialDocuments]);
+    setReadyForReview(new Set(initialReadyForReview));
+  }, [initialDocuments, initialReadyForReview]);
 
   useEffect(() => {
-    const pendingIds = documents.filter((d) => d.status === "pending").map((d) => d.id);
+    const pendingIds = documents
+      .filter((d) => d.status === "pending" && !readyForReview.has(d.id))
+      .map((d) => d.id);
     if (pendingIds.length === 0) return;
 
     const supabase = createClient();
     let cancelled = false;
 
     async function poll() {
-      const [{ data: docs }, { data: events }] = await Promise.all([
+      const [{ data: docs }, { data: events }, { data: results }] = await Promise.all([
         supabase.from("documents").select("id, storage_path, status, created_at").in("id", pendingIds),
         supabase
           .from("document_processing_events")
           .select("document_id, stage, status, error_message, started_at")
           .in("document_id", pendingIds)
           .order("started_at", { ascending: false }),
+        supabase.from("extraction_results").select("document_id").in("document_id", pendingIds),
       ]);
 
       if (cancelled) return;
 
       if (docs) {
         setDocuments((prev) => prev.map((d) => docs.find((updated) => updated.id === d.id) ?? d));
+      }
+
+      if (results && results.length > 0) {
+        setReadyForReview((prev) => {
+          const next = new Set(prev);
+          for (const r of results) next.add(r.document_id);
+          return next;
+        });
       }
 
       if (events) {
@@ -86,9 +111,14 @@ export function DocumentsTable({ documents: initialDocuments }: { documents: Doc
       cancelled = true;
       clearInterval(interval);
     };
-    // Re-run only when the set of pending document ids changes.
+    // Re-run only when the set of documents still needing polling changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documents.map((d) => (d.status === "pending" ? d.id : null)).join(",")]);
+  }, [
+    documents
+      .filter((d) => d.status === "pending" && !readyForReview.has(d.id))
+      .map((d) => d.id)
+      .join(","),
+  ]);
 
   return (
     <Table>
@@ -97,11 +127,13 @@ export function DocumentsTable({ documents: initialDocuments }: { documents: Doc
           <TableHead>File</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Uploaded</TableHead>
+          <TableHead />
         </TableRow>
       </TableHeader>
       <TableBody>
         {documents.map((doc) => {
           const latest = latestEvents[doc.id];
+          const isReady = readyForReview.has(doc.id);
           return (
             <TableRow key={doc.id}>
               <TableCell className="max-w-xs truncate">
@@ -110,7 +142,7 @@ export function DocumentsTable({ documents: initialDocuments }: { documents: Doc
               <TableCell>
                 <div className="flex flex-col gap-1">
                   <Badge variant={STATUS_VARIANT[doc.status] ?? "secondary"}>{doc.status}</Badge>
-                  {doc.status === "pending" && latest && (
+                  {doc.status === "pending" && !isReady && latest && (
                     <span className="text-xs text-muted-foreground">
                       {latest.stage}: {latest.status}
                     </span>
@@ -124,6 +156,24 @@ export function DocumentsTable({ documents: initialDocuments }: { documents: Doc
               </TableCell>
               <TableCell>
                 {new Date(doc.created_at).toLocaleString("en-US", { timeZone: "UTC" })}
+              </TableCell>
+              <TableCell>
+                {doc.status === "pending" && isReady && (
+                  <Link
+                    href={`/projects/${projectId}/documents/${doc.id}`}
+                    className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                  >
+                    Review & Confirm
+                  </Link>
+                )}
+                {doc.status === "confirmed" && (
+                  <Link
+                    href={`/projects/${projectId}/documents/${doc.id}`}
+                    className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}
+                  >
+                    View
+                  </Link>
+                )}
               </TableCell>
             </TableRow>
           );

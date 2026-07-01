@@ -69,7 +69,7 @@ Call the vision LLM on an uploaded document and display the raw extracted result
 
 **Milestone:** upload a real invoice and see structured line items extracted from it. Use this phase to tune the extraction prompt against real data before building the pipeline around it. ✅ Done — implemented in `web/src/lib/extraction.ts` using Claude (vision), tested against a real receipt. Superseded in Phase 3 — this file was deleted once extraction moved into `workers/`.
 
-**Known issue found and fixed:** on the real receipt tested, one line item's description absorbed unrelated text from elsewhere on the document (`BRCKT, CARPORT 13GA SDL HDG 6X6"` picked up a `THURSDAY DELIVERY` note that isn't part of the item description). Fixed by constraining each line item's description to its own table cell in the prompt — see `workers/estimator_workers/extraction.py`. Not re-verified against a real receipt with the tightened prompt yet (Phase 3 testing used the same receipt but didn't specifically re-check this line item).
+**Known issue found and fixed:** on the real receipt tested, one line item's description absorbed unrelated text from elsewhere on the document (`BRCKT, CARPORT 13GA SDL HDG 6X6"` picked up a `THURSDAY DELIVERY` note that isn't part of the item description). Fixed by constraining each line item's description to its own table cell in the prompt — see `workers/estimator_workers/extraction.py`. Re-verified during Phase 4 testing: the same line item on the same receipt no longer picks up the delivery note.
 
 ---
 
@@ -111,7 +111,11 @@ Users review extracted data and confirm it. Confirmed data is promoted into the 
 
 **Explicitly deferred:** material catalog matching (Phase 5), search (Phase 6), estimates (Phase 7).
 
-**Milestone:** upload a document, let it process, confirm the extracted data, and verify that `Invoice` and `LineItem` records appear in the database with correct values.
+**Milestone:** upload a document, let it process, confirm the extracted data, and verify that `Invoice` and `LineItem` records appear in the database with correct values. ✅ Done — verified end-to-end against the live Supabase project: confirmed the real receipt tested in Phase 3, producing an `Invoice` (correct supplier/date/total) and 14 `LineItem` rows, including the canonical "PT 2x8" example from `product-mvp.md` with the exact quantity and price (75 @ $28.99) that spec uses as its search demonstration. A new `Supplier` ("Hill's Home Building Centre") and its `CompanySupplier` link were also created correctly. Also verified the read-only `confirmed` state (no duplicate Confirm button, correct message) and that "Review & Confirm" only appears once extraction has actually completed.
+
+**Implementation note:** "ready for review" is determined by whether an `extraction_results` row exists for the document, not by directly querying the latest `DocumentProcessingEvent`. Functionally equivalent — a row is only ever written there once the `parse` stage succeeds — but simpler to query.
+
+**Not yet tested:** supplier de-duplication across two different documents from the same supplier (only one confirm was tested, which always takes the "create new Supplier" path). The `ilike` exact-match-only lookup is also a known simplification — variant supplier name phrasings won't match, same open problem as material matching.
 
 ---
 
