@@ -8,3 +8,4 @@ __pycache__/
 .venv/
 .next/
 .DS_Store
+.playwright-mcp/
