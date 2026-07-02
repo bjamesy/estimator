@@ -176,6 +176,17 @@ await celery.broker.publish(message.body, "", QUEUE, message.headers, message.pr
 
 This constructs the Celery protocol v2 task message by hand and publishes it to the `celery` queue on the default exchange, awaiting both steps — so a broker hiccup at publish time throws back up into the calling Server Action (`uploadDocument` or `confirmDocument`) instead of disappearing. For `uploadDocument` specifically, that means the user sees an inline error instead of a document silently stuck at `pending` forever with no pipeline ever having run.
 
+`publishTask` opens a fresh AMQP connection for each call and closes it (`celery.broker.disconnect()`) once the publish resolves, rather than caching one long-lived connection across calls. This is deliberate, not an oversight — see "Heartbeats are disabled" below.
+
+### Heartbeats are disabled
+
+Neither side of this app pins an AMQP heartbeat, and the effective behavior is asymmetric between them:
+
+- **`workers/` (Celery/py-amqp)** sets `app.conf.broker_heartbeat = 0` (`estimator_workers/celery_app.py`). py-amqp's negotiation explicitly overrides the broker's proposed heartbeat to `0` when the client disables it, and sends that `0` back to the broker in `ConnectionTuneOk` — so the broker also agrees not to expect heartbeats on this connection. Verified live against CloudAMQP: the negotiated `connection.heartbeat` is `0` even though the broker still proposes a non-zero value.
+- **`web/` (`celery-node`/`amqplib`)** has no equivalent override — `amqplib`'s negotiation always defers to whatever the broker proposes once the broker's value is non-zero, regardless of what the client requests (confirmed empirically: neither an `opts.heartbeat` nor a `?heartbeat=0` query param changes the negotiated value against this project's CloudAMQP instance). A long-lived cached connection sitting idle between uploads/confirms would therefore keep sending heartbeat frames at the broker's interval no matter what config is set. Since publishing here is a one-shot, infrequent, user-triggered action (not a persistent consumer, unlike `workers/`), the fix is architectural rather than a config flag: `publishTask` connects, publishes, and disconnects immediately (above) — a connection that short-lived never survives long enough for the negotiated heartbeat interval to elapse, so no heartbeat frame is ever sent.
+
+This trade-off (an extra connect handshake per publish, in exchange for zero idle-connection heartbeat traffic) is worth revisiting once there's real production traffic where either the added latency or dead-connection detection start to matter more than avoiding CloudAMQP's per-message metering pre-launch.
+
 ---
 
 ## Open Questions (Resolved)
