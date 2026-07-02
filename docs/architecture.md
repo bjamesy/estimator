@@ -162,7 +162,7 @@ The confirm step is intentionally minimal in MVP. A richer correction UI (editin
 ## Upload-to-Pipeline Handoff
 
 1. User uploads a file via the `uploadDocument` Server Action (`web/src/app/actions/documents.ts`). The upload form (`upload-form.tsx`) auto-submits the moment a file is selected — no separate Upload button — and on touch devices additionally offers a "Take photo" button that opens the camera directly (`capture="environment"` on the shared hidden file input; the button is shown via CSS `pointer: coarse` detection, since screen width is a poor proxy for "has a camera")
-2. Next.js verifies the target project belongs to the caller's company (RLS alone doesn't check this — see Company Scoping), then writes the original to Supabase Storage
+2. Next.js verifies the target project belongs to the caller's company (RLS alone doesn't check this — see Company Scoping) and computes a SHA-256 of the file, hard-blocking a byte-identical re-upload within the same project before anything is written (per-project idempotency — see `content_hash` in `data_model.md` → Document). Then it writes the original to Supabase Storage
 3. Next.js creates a `Document` record with `status = pending` and records the storage path
 4. Next.js publishes the `estimator_workers.tasks.process_document` Celery task to RabbitMQ containing the `document_id`, `company_id`, and storage path
 5. Python worker picks up the task, begins the `fetch → extract → parse` stage chain (see Extraction Pipeline above)

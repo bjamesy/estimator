@@ -15,6 +15,13 @@ const ALLOWED_TYPES = [
 ];
 const ALLOWED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif"];
 
+const POSTGRES_UNIQUE_VIOLATION = "23505";
+
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Buffer.from(digest).toString("hex");
+}
+
 export async function uploadDocument(
   projectId: string,
   _prevState: unknown,
@@ -57,6 +64,32 @@ export async function uploadDocument(
     return { error: "Project not found." };
   }
 
+  // Per-project idempotency: hard-block a byte-identical re-upload
+  // before anything is written (duplicated confirmed receipts double
+  // quantities in estimate seeding and repeat purchases in search).
+  // Failed documents are excluded -- re-uploading the identical file is
+  // the documented recovery path after terminal failure. Documents from
+  // before migration 0012 have a null hash and aren't policed. This
+  // only catches exact byte duplicates; two different photos of the
+  // same physical receipt are different bytes (semantic dedupe is a
+  // separate, post-MVP concern).
+  const contentHash = await sha256Hex(file);
+  const { data: duplicate } = await supabase
+    .from("documents")
+    .select("status, created_at")
+    .eq("project_id", projectId)
+    .eq("content_hash", contentHash)
+    .neq("status", "failed")
+    .limit(1)
+    .maybeSingle();
+  if (duplicate) {
+    return {
+      error: `This exact file was already uploaded to this project on ${new Date(
+        duplicate.created_at,
+      ).toLocaleDateString("en-US")} (status: ${duplicate.status}).`,
+    };
+  }
+
   // Path prefix must be company_id -- the storage RLS policy checks the
   // first path segment. See database/migrations/0005_storage_bucket.sql.
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -77,10 +110,20 @@ export async function uploadDocument(
       company_id: companyId,
       storage_path: storagePath,
       status: "pending",
+      content_hash: contentHash,
     })
     .select("id")
     .single();
 
+  if (insertError?.code === POSTGRES_UNIQUE_VIOLATION) {
+    // Two simultaneous uploads of the same file both passed the check
+    // above; the partial unique index caught the loser. The winning
+    // upload's document stands -- clean up this one's freshly-stored
+    // object (best-effort; it never had a documents row, so removing it
+    // doesn't violate originals-are-retained).
+    await supabase.storage.from("documents").remove([storagePath]);
+    return { error: "This exact file was already uploaded to this project." };
+  }
   if (insertError || !document) {
     return { error: `Upload stored, but record creation failed: ${insertError?.message}` };
   }

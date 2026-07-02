@@ -67,10 +67,13 @@ Document
   company_id       FK → Company
   storage_path     location in Supabase Storage
   status           "pending" | "failed" | "confirmed"
+  content_hash     SHA-256 of the file bytes, nullable — unique per project (partial)
   created_at
 ```
 
 `status` is coarse-grained and terminal-only. The pipeline never writes intermediate status to it — the one exception is terminal failure, which the worker sets directly. See `architecture.md` → Document Status for the full state description.
+
+`content_hash` enforces per-project upload idempotency: a partial unique index on `(project_id, content_hash)` (excluding `failed` documents and null hashes) hard-blocks byte-identical re-uploads within a project, since duplicated confirmed receipts would double quantities in estimate seeding and repeat purchases in search. Failed documents are excluded because re-uploading the identical file is the documented recovery path after terminal failure; pre-migration documents have a null hash and aren't policed. Exact-byte matching only — two different photos of the same physical receipt are different bytes (semantic dedupe is a separate, post-MVP concern).
 
 ---
 
