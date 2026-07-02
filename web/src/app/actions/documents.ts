@@ -90,8 +90,8 @@ export async function uploadDocument(
   } catch (err) {
     // The Document row and file both exist; only the pipeline kickoff
     // failed. Document.status stays "pending" with no pipeline events --
-    // surfacing that distinction to the user is a Phase 3+ UX gap, not
-    // something to paper over here with a fake retry.
+    // the documents table detects that staleness and offers Retry
+    // (retryDocumentProcessing below), so this isn't a dead end.
     return {
       error: `Upload succeeded, but starting processing failed: ${
         err instanceof Error ? err.message : "unknown error"
@@ -100,5 +100,81 @@ export async function uploadDocument(
   }
 
   revalidatePath(`/projects/${projectId}`);
+  return { error: null };
+}
+
+// Keep in sync with STALL_THRESHOLD_MS in documents-table.tsx ("use
+// server" files may only export async functions, so the constant can't
+// be shared directly). 5 minutes comfortably exceeds the pipeline's
+// worst legitimate quiet stretch (3 retries with 10/20/30s backoffs).
+const STALL_THRESHOLD_MS = 5 * 60 * 1000;
+
+// Recovery for documents stranded in "pending": the pipeline task was
+// lost before completing (broker wiped mid-chain, worker down when the
+// message arrived, publish failed after the row was created). Distinct
+// from terminal *failure* -- a failed document documents what went wrong
+// and the answer is re-uploading; a stalled document simply never got
+// its work done, and re-publishing is safe by construction: fetch
+// re-downloads, extract re-calls the LLM, parse writes a fresh
+// ExtractionResult (confirm reads the latest one).
+export async function retryDocumentProcessing(
+  documentId: string,
+): Promise<{ error: string | null }> {
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const { data: document } = await supabase
+    .from("documents")
+    .select("id, project_id, company_id, storage_path, status, created_at")
+    .eq("id", documentId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!document) {
+    return { error: "Document not found." };
+  }
+  if (document.status !== "pending") {
+    return { error: `Document is ${document.status}; only pending documents can be retried.` };
+  }
+
+  // Server-side staleness re-check -- the UI gates on the same rule, but
+  // this action is directly invocable, and re-publishing a document
+  // that's actively processing would run a duplicate pipeline (and pay
+  // for duplicate LLM calls) for nothing.
+  const { data: extraction } = await supabase
+    .from("extraction_results")
+    .select("id")
+    .eq("document_id", documentId)
+    .limit(1)
+    .maybeSingle();
+  if (extraction) {
+    return { error: "Document has already been extracted and is ready for review." };
+  }
+
+  const { data: latestEvent } = await supabase
+    .from("document_processing_events")
+    .select("started_at")
+    .eq("document_id", documentId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const lastActivity = new Date(latestEvent?.started_at ?? document.created_at).getTime();
+  if (Date.now() - lastActivity < STALL_THRESHOLD_MS) {
+    return { error: "Document appears to still be processing; give it a few minutes first." };
+  }
+
+  try {
+    await publishProcessDocumentTask(document.id, document.company_id, document.storage_path);
+  } catch (err) {
+    return {
+      error: `Retry failed to start processing: ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
+    };
+  }
+
+  revalidatePath(`/projects/${document.project_id}`);
   return { error: null };
 }

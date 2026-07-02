@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { retryDocumentProcessing } from "@/app/actions/documents";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ type LatestEvent = {
   stage: string;
   status: "started" | "succeeded" | "failed";
   error_message: string | null;
+  started_at: string;
 } | null;
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = {
@@ -29,6 +31,14 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = 
 };
 
 const POLL_INTERVAL_MS = 2000;
+
+// Keep in sync with STALL_THRESHOLD_MS in app/actions/documents.ts (the
+// action re-checks server-side). A pending document with no pipeline
+// activity for this long has almost certainly lost its task (broker
+// wiped mid-chain, worker down, publish failure) -- the pipeline's worst
+// legitimate quiet stretch is the 10/20/30s retry backoffs, minutes
+// shorter than this.
+const STALL_THRESHOLD_MS = 5 * 60 * 1000;
 
 export function DocumentsTable({
   projectId,
@@ -42,6 +52,24 @@ export function DocumentsTable({
   const [documents, setDocuments] = useState(initialDocuments);
   const [readyForReview, setReadyForReview] = useState(new Set(initialReadyForReview));
   const [latestEvents, setLatestEvents] = useState<Record<string, LatestEvent>>({});
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
+  // Clock for staleness checks, advanced by the poll loop below rather
+  // than calling Date.now() during render (render must stay pure). 0
+  // means "no poll tick yet" -- nothing shows as stalled until the
+  // first tick lands (~immediately after mount while pending docs
+  // exist, which is the only time stalledness matters).
+  const [now, setNow] = useState(0);
+
+  async function handleRetry(documentId: string) {
+    setRetryingId(documentId);
+    setRetryErrors((prev) => ({ ...prev, [documentId]: "" }));
+    const { error } = await retryDocumentProcessing(documentId);
+    if (error) {
+      setRetryErrors((prev) => ({ ...prev, [documentId]: error }));
+    }
+    setRetryingId(null);
+  }
 
   // initialDocuments/initialReadyForReview are fresh every time the parent
   // Server Component re-renders (e.g. after revalidatePath on upload) --
@@ -63,6 +91,7 @@ export function DocumentsTable({
     let cancelled = false;
 
     async function poll() {
+      setNow(Date.now());
       const [{ data: docs }, { data: events }, { data: results }] = await Promise.all([
         supabase.from("documents").select("id, storage_path, status, created_at").in("id", pendingIds),
         supabase
@@ -97,6 +126,7 @@ export function DocumentsTable({
                 stage: latest.stage,
                 status: latest.status,
                 error_message: latest.error_message,
+                started_at: latest.started_at,
               };
             }
           }
@@ -134,6 +164,17 @@ export function DocumentsTable({
         {documents.map((doc) => {
           const latest = latestEvents[doc.id];
           const isReady = readyForReview.has(doc.id);
+          // No pipeline activity past the threshold means the task was
+          // lost (broker wiped mid-chain, worker down at publish time) --
+          // the chain never resumes on its own, so waiting longer won't
+          // help. Falls back to created_at for documents whose task was
+          // lost before any event was ever written.
+          const lastActivity = new Date(latest?.started_at ?? doc.created_at).getTime();
+          const isStalled =
+            doc.status === "pending" &&
+            !isReady &&
+            now > 0 &&
+            now - lastActivity > STALL_THRESHOLD_MS;
           return (
             <TableRow key={doc.id}>
               <TableCell className="max-w-xs truncate">
@@ -142,9 +183,19 @@ export function DocumentsTable({
               <TableCell>
                 <div className="flex flex-col gap-1">
                   <Badge variant={STATUS_VARIANT[doc.status] ?? "secondary"}>{doc.status}</Badge>
-                  {doc.status === "pending" && !isReady && latest && (
+                  {doc.status === "pending" && !isReady && !isStalled && latest && (
                     <span className="text-xs text-muted-foreground">
                       {latest.stage}: {latest.status}
+                    </span>
+                  )}
+                  {isStalled && (
+                    <span className="text-xs text-destructive">
+                      processing stalled — the task appears to have been lost
+                    </span>
+                  )}
+                  {retryErrors[doc.id] && (
+                    <span className="max-w-xs truncate text-xs text-destructive">
+                      {retryErrors[doc.id]}
                     </span>
                   )}
                   {doc.status === "failed" && latest?.error_message && (
@@ -165,6 +216,16 @@ export function DocumentsTable({
                   >
                     Review & Confirm
                   </Link>
+                )}
+                {isStalled && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={retryingId === doc.id}
+                    onClick={() => handleRetry(doc.id)}
+                  >
+                    {retryingId === doc.id ? "Retrying..." : "Retry processing"}
+                  </Button>
                 )}
                 {doc.status === "confirmed" && (
                   <Link

@@ -108,9 +108,11 @@ The frontend determines pipeline state by querying the latest event row(s) for a
 
 ### Retry and failure
 
-Celery handles retries automatically with backoff on transient failures. If a stage exceeds its configured retry limit, it inserts a `failed` event row and the job is considered terminally failed. There is no manual retry from the UI. The user's only path after terminal failure is re-uploading the document.
+Celery handles retries automatically with backoff on transient failures. If a stage exceeds its configured retry limit, it inserts a `failed` event row and the job is considered terminally failed. There is no manual retry from the UI for terminal *failure*. The user's only path after terminal failure is re-uploading the document.
 
 Re-uploading creates a new `Document` record (new `document_id`, new pipeline run) rather than reusing the failed one. The failed `Document` and its `DocumentProcessingEvent` history are left in place as a record of what happened. This also means a stale in-flight task from a failed run can never write results against a document the user has since replaced — it can only ever write against its own `document_id`, which stays terminally `failed`.
+
+**Stalled is a distinct state from failed, and it does get a retry.** A document can be stranded in `pending` without ever failing: the task message is lost before completing (broker wiped mid-chain, worker down when the message arrived, publish succeeded but nothing consumed it). Nothing in the pipeline will ever touch that document again, no `failed` event exists, and waiting doesn't help. The documents table detects this — a `pending` document with no `ExtractionResult` and no pipeline event activity for 5 minutes (comfortably past the worst legitimate retry-backoff quiet stretch) shows a "processing stalled" indicator and a **Retry processing** button (`retryDocumentProcessing` in `web/src/app/actions/documents.ts`, which re-checks the staleness gate server-side before re-publishing). Re-publishing `process_document` is safe by construction: `fetch` re-downloads, `extract` re-calls the LLM, and `parse` writes a fresh `ExtractionResult` row (multiple can exist; the confirm step reads the latest). This doesn't conflict with the no-retry-on-failure decision above — a failed document records *what went wrong* and re-running would hit the same wall; a stalled document simply never got its work done.
 
 ---
 
