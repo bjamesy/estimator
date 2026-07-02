@@ -5,7 +5,7 @@ import { z } from "zod";
 // validates before writing this JSONB payload, but the column itself has
 // no schema enforcement at the DB level -- re-validating here before
 // promotion is the "Next.js validates the ExtractionResult payload" step
-// from docs/implementation_plan.md -> Phase 4.
+// from docs/mvp/implementation_plan.md -> Phase 4.
 export const extractionPayloadSchema = z.object({
   supplier_name: z.string(),
   invoice_date: z.string().nullable(),

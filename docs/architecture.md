@@ -1,8 +1,8 @@
 # Architecture
 
-**Status:** Implemented. All phases (0–7) of `implementation_plan.md` are complete and verified end-to-end against a live Supabase project as of 2026-07-01. The three subsystems originally flagged as open questions (search, material matching, estimates) are resolved — see the bottom of this document for each decision and its reasoning.
+**Status:** Implemented. All phases (0–7) of `mvp/implementation_plan.md` are complete and verified end-to-end against a live Supabase project as of 2026-07-01. The three subsystems originally flagged as open questions (search, material matching, estimates) are resolved — see the bottom of this document for each decision and its reasoning.
 
-Related: [Product Spec](./product-mvp.md), [Data Model](./data_model.md), [Implementation Plan](./implementation_plan.md)
+Related: [Product Spec](./mvp/product-mvp.md), [Data Model](./data_model.md), [Implementation Plan](./mvp/implementation_plan.md) — `mvp/` is frozen history from the MVP build, no longer maintained
 
 ---
 
@@ -40,7 +40,7 @@ The web app and Python worker service are separate deployments sharing one Postg
 
 ## Company Scoping
 
-All data is company-scoped; there is no cross-company sharing in MVP (see `product-mvp.md`). Enforcement:
+All data is company-scoped; there is no cross-company sharing in MVP (see `mvp/product-mvp.md`). Enforcement:
 
 - **Postgres:** Supabase Row Level Security (RLS) policies on every table, scoped by `company_id`. This is the primary enforcement boundary — both Next.js and the Python worker query through it, so a bug in either codebase's filtering logic can't leak cross-company data.
 - **Celery task payload:** every task carries `company_id` alongside `document_id`, so a worker scoping a lookup (e.g. a MaterialCatalog match) has it available without a join back through Document.
@@ -225,7 +225,7 @@ The approach that powers automatic catalog matching had not been chosen. Options
 - Avoids introducing a new dependency. Embeddings would have required a vector store (e.g. pgvector) and an embeddings provider (Anthropic has no embeddings endpoint of its own); fuzzy matching would have needed a new library or Postgres extension. An LLM call reuses the Anthropic integration already wired into `workers/`.
 - Matching runs after confirmation, not during extraction, per the product principle that "confirm what was actually purchased" and "the system does its catalog grouping" are separate concerns — see `data_model.md` → MaterialMatch.
 
-**Verified in testing:** confirming a second invoice with overlapping materials correctly matched all line items to the *existing* `MaterialCatalog` rows created by the first invoice (zero duplicate catalog entries), while a first-ever invoice for a company correctly created new entries. The LLM also made a reasonable catalog-granularity judgment call unprompted — treating different lumber lengths (e.g. "PT 2x8x12" vs "PT 2x8x16") as distinct materials rather than collapsing them, which aligns with "historical accuracy over categorization" in `product-mvp.md` since they have genuinely different prices.
+**Verified in testing:** confirming a second invoice with overlapping materials correctly matched all line items to the *existing* `MaterialCatalog` rows created by the first invoice (zero duplicate catalog entries), while a first-ever invoice for a company correctly created new entries. The LLM also made a reasonable catalog-granularity judgment call unprompted — treating different lumber lengths (e.g. "PT 2x8x12" vs "PT 2x8x16") as distinct materials rather than collapsing them, which aligns with "historical accuracy over categorization" in `mvp/product-mvp.md` since they have genuinely different prices.
 
 **Known limitation carried forward:** no confidence threshold or fallback — every line item gets a `proposed` match, right or wrong, and the only human check is post-hoc flagging. If this proves too noisy in practice, a hybrid approach (e.g. fuzzy pre-filter, LLM only for ambiguous cases) is the natural next step, not a redesign.
 
@@ -237,7 +237,7 @@ How estimates are structured, stored, and linked to historical line items had no
 
 **Reasoning:**
 - Consistent with the snapshot pattern already used everywhere else in the system: `ExtractionResult` → `Invoice`/`LineItem` promotion is a one-time copy, not a live reference either. Estimates get the same treatment.
-- "The estimate remains fully editable" (`product-mvp.md` → Build Estimates) only makes sense if an estimate line is independent of its source the moment it's added — a live link would mean editing the estimate line's price doesn't actually mean anything, or worse, editing the *source* `LineItem` retroactively changes past estimates.
+- "The estimate remains fully editable" (`mvp/product-mvp.md` → Build Estimates) only makes sense if an estimate line is independent of its source the moment it's added — a live link would mean editing the estimate line's price doesn't actually mean anything, or worse, editing the *source* `LineItem` retroactively changes past estimates.
 - A live link also has a real failure mode a snapshot avoids: if the source line item's material match is later flagged wrong (Phase 5) or the underlying document is somehow found to be bad, that shouldn't silently mutate an estimate a contractor already sent to a client.
 
 **Markup/inflation adjustment lives per-line**: `EstimateLine.markup_percent` (default 0), not an estimate-level global field and not a separate config table. Simplest field that still supports a blanket rate across an estimate if the user sets the same value on every line; an estimate-level default can be added later without a schema change if that turns out to be a common enough workflow to warrant a UI shortcut.

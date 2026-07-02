@@ -47,13 +47,13 @@ Explicitly out of scope for MVP:
 web/          Next.js (TypeScript) app -- frontend, server actions, Celery task publisher
 workers/      Python + Celery -- extraction pipeline (vision LLM) and material matching (batched LLM call)
 database/     Postgres migrations -- canonical schema source, applied to Supabase
-docs/         product-mvp.md, architecture.md, data_model.md, implementation_plan.md
+docs/         architecture.md, data_model.md (kept current); mvp/ (frozen build-history docs, no longer maintained)
 ```
 
 Both `web/` and `workers/` need to be running for uploads/confirms to actually process end to end — see the root `README.md`.
 
 ## Current State
 
-MVP complete. All phases (0–7) of `docs/implementation_plan.md` are implemented and verified end-to-end against a live Supabase project: auth/company creation → project + document upload → vision LLM extraction → user confirm → promotion into the historical record → material matching → company-wide search → estimates with historical pricing and markup.
+MVP complete. All phases (0–7) of `docs/mvp/implementation_plan.md` are implemented and verified end-to-end against a live Supabase project: auth/company creation → project + document upload → vision LLM extraction → user confirm → promotion into the historical record → material matching → company-wide search → estimates with historical pricing and markup.
 
 `docs/architecture.md` and `docs/data_model.md` are the current source of truth for system design and schema; both were kept up to date as each phase was built, including the reasoning behind the three decisions that were originally open questions (search approach, material-matching approach, estimate data flow).

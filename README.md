@@ -1,6 +1,6 @@
 # Estimator
 
-Turns historical purchasing documents into a searchable knowledge base for project estimating. See [`docs/product-mvp.md`](docs/product-mvp.md) for the product spec, [`docs/architecture.md`](docs/architecture.md) for the system design, [`docs/data_model.md`](docs/data_model.md) for the schema, and [`docs/implementation_plan.md`](docs/implementation_plan.md) for the phased build plan.
+Turns historical purchasing documents into a searchable knowledge base for project estimating. See [`docs/mvp/product-mvp.md`](docs/mvp/product-mvp.md) for the product spec, [`docs/architecture.md`](docs/architecture.md) for the system design, [`docs/data_model.md`](docs/data_model.md) for the schema, and [`docs/mvp/implementation_plan.md`](docs/mvp/implementation_plan.md) for the phased build plan. `docs/mvp/` is frozen history from the MVP build — `architecture.md` and `data_model.md` are the docs still kept current.
 
 **Status:** MVP complete. All phases (0–7) are implemented — upload a document, it's extracted by a vision LLM, you confirm the extracted data, it's promoted into the historical record, line items are auto-matched to a material catalog, everything is searchable company-wide, and estimates can pull in historical pricing with a markup applied.
 

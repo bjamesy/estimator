@@ -36,7 +36,7 @@ class ExtractionPayload(BaseModel):
 # Ported from web/src/lib/extraction.ts (Phase 2). The "own table cell"
 # constraint was added after Phase 2 testing surfaced a real issue: a line
 # item absorbed an unrelated "THURSDAY DELIVERY" note from elsewhere on the
-# document. See docs/implementation_plan.md -> Phase 2 notes.
+# document. See docs/mvp/implementation_plan.md -> Phase 2 notes.
 EXTRACTION_PROMPT = """You are extracting structured data from a photo or scan of a construction supplier invoice or receipt.
 
 Return ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:

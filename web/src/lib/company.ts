@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 
 // MVP has no multi-company-per-user flow yet, so a user's first membership
-// is their only one. See docs/implementation_plan.md -> Phase 1.
+// is their only one. See docs/mvp/implementation_plan.md -> Phase 1.
 export async function getCurrentCompanyId(): Promise<string> {
   const supabase = await createClient();
   const {

@@ -15,11 +15,11 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 7. `0007_search_line_items.sql` — the `search_line_items` SQL function powering company-wide search (see `docs/architecture.md` → Open Questions → Search and indexing)
 8. `0008_set_search_line_items_search_path.sql` — fixes a security advisor warning on `search_line_items`
 9. `0009_estimates.sql` — `estimates` and `estimate_lines`
-10. `0010_data_safety_fixes.sql` — unique constraint on `invoices.document_id`, `CASCADE` → `RESTRICT` on the historical-data FK chain, unique index on `material_catalog (company_id, lower(name))` — see `docs/implementation_plan.md` → "Post-review fixes"
+10. `0010_data_safety_fixes.sql` — unique constraint on `invoices.document_id`, `CASCADE` → `RESTRICT` on the historical-data FK chain, unique index on `material_catalog (company_id, lower(name))` — see `docs/mvp/implementation_plan.md` → "Post-review fixes"
 
 ## Applying to a Supabase project
 
-Once a Supabase project exists (Phase 0 — see `docs/implementation_plan.md`):
+Once a Supabase project exists (Phase 0 — see `docs/mvp/implementation_plan.md`):
 
 ```bash
 # Via the Supabase CLI, pointed at this directory:
