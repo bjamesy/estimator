@@ -7,6 +7,7 @@ import { retryDocumentProcessing } from "@/app/actions/documents";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { documentFileName } from "@/lib/documents";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -154,10 +155,10 @@ export function DocumentsTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>File</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Uploaded</TableHead>
           <TableHead />
+          <TableHead>File</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -177,9 +178,6 @@ export function DocumentsTable({
             now - lastActivity > STALL_THRESHOLD_MS;
           return (
             <TableRow key={doc.id}>
-              <TableCell className="max-w-xs truncate">
-                {doc.storage_path.split("/").pop()}
-              </TableCell>
               <TableCell>
                 <div className="flex flex-col gap-1">
                   <Badge variant={STATUS_VARIANT[doc.status] ?? "secondary"}>{doc.status}</Badge>
@@ -235,6 +233,9 @@ export function DocumentsTable({
                     View
                   </Link>
                 )}
+              </TableCell>
+              <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
+                {documentFileName(doc.storage_path)}
               </TableCell>
             </TableRow>
           );

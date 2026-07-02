@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { documentFileName } from "@/lib/documents";
 import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
 
@@ -100,7 +101,7 @@ export default async function DocumentReviewPage({
           &larr; Back to project
         </Link>
         <div className="mt-2 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">{document.storage_path.split("/").pop()}</h1>
+          <h1 className="text-2xl font-semibold">{documentFileName(document.storage_path)}</h1>
           <Badge variant={document.status === "confirmed" ? "default" : "secondary"}>
             {document.status}
           </Badge>
