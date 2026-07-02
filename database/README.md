@@ -18,6 +18,7 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 10. `0010_data_safety_fixes.sql` — unique constraint on `invoices.document_id`, `CASCADE` → `RESTRICT` on the historical-data FK chain, unique index on `material_catalog (company_id, lower(name))` — see `docs/mvp/implementation_plan.md` → "Post-review fixes"
 11. `0011_estimates_project_optional.sql` — makes `estimates.project_id` nullable and changes its FK from `CASCADE` to `SET NULL`, decoupling Estimates from Projects (see `docs/architecture.md` → Open Questions → Estimate-building data flow)
 12. `0012_document_content_hash.sql` — adds `documents.content_hash` (SHA-256) with a partial unique index on `(project_id, content_hash)` for per-project upload idempotency (see `docs/data_model.md` → Document)
+13. `0013_unique_names.sql` — case-insensitive unique indexes on project names (per company) and estimate names (per project; standalone estimates form their own group via `NULLS NOT DISTINCT`)
 
 ## Applying to a Supabase project
 
@@ -34,4 +35,4 @@ Or paste each file into the Supabase Studio SQL editor in order. `SUPABASE_DB_UR
 ## Notes
 
 - `suppliers` has no `company_id` and is excluded from company-scoped RLS by design — see `docs/data_model.md` → Supplier.
-- All migrations through `0012` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.
+- All migrations through `0013` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.

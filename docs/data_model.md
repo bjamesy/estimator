@@ -51,7 +51,7 @@ Company
 Project
   id
   company_id      FK → Company
-  name
+  name            unique per company (case-insensitive)
   status          e.g. "active" | "archived"
   created_at
 ```
@@ -219,7 +219,8 @@ Estimate
   id
   project_id      FK → Project, nullable — optional reference only, not required
   company_id      FK → Company
-  name            e.g. "Initial Estimate", "Rev 2"
+  name            unique per project, case-insensitive (standalone estimates form
+                   their own uniqueness group within the company — NULLS NOT DISTINCT)
   created_at
 ```
 

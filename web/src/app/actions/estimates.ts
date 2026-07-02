@@ -6,8 +6,18 @@ import { redirect } from "next/navigation";
 import { tryGetCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
+const POSTGRES_UNIQUE_VIOLATION = "23505";
+
 function computeTotal(quantity: number, unitPrice: number, markupPercent: number): number {
   return quantity * unitPrice * (1 + markupPercent / 100);
+}
+
+// Case-insensitive unique per project (standalone estimates form their
+// own group within the company) -- see 0013_unique_names.sql.
+function duplicateNameError(name: string, hasProject: boolean): string {
+  return hasProject
+    ? `An estimate named "${name}" already exists in this project.`
+    : `A standalone estimate named "${name}" already exists.`;
 }
 
 // estimate_lines' RLS policy only validates the new row's own company_id
@@ -41,7 +51,7 @@ async function assertEstimateOwnership(
 // no project); a project's own page instead offers
 // createEstimateFromProject, which is strictly more useful there.
 export async function createEstimate(_prevState: unknown, formData: FormData) {
-  const name = formData.get("name") as string;
+  const name = (formData.get("name") as string)?.trim();
   if (!name) {
     return { error: "Estimate name is required." };
   }
@@ -61,6 +71,9 @@ export async function createEstimate(_prevState: unknown, formData: FormData) {
     .select("id")
     .single();
 
+  if (error?.code === POSTGRES_UNIQUE_VIOLATION) {
+    return { error: duplicateNameError(name, resolvedProjectId !== null) };
+  }
   if (error) {
     return { error: error.message };
   }
@@ -92,7 +105,7 @@ export async function createEstimateFromProject(
   _prevState: unknown,
   formData: FormData,
 ) {
-  const name = formData.get("name") as string;
+  const name = (formData.get("name") as string)?.trim();
   if (!name) {
     return { error: "Estimate name is required." };
   }
@@ -204,6 +217,9 @@ export async function createEstimateFromProject(
     .select("id")
     .single();
 
+  if (estimateError?.code === POSTGRES_UNIQUE_VIOLATION) {
+    return { error: duplicateNameError(name, true) };
+  }
   if (estimateError) {
     return { error: estimateError.message };
   }
