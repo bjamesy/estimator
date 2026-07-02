@@ -58,7 +58,27 @@ Original documents are written to Supabase Storage on upload and never modified 
 
 ## Extraction Pipeline
 
-The extraction pipeline runs as a chain of Celery tasks. Each stage is a discrete task: for example, `fetch` (retrieve file from Supabase Storage) → `extract` (call vision LLM) → `parse` (structure LLM response into ExtractionResult).
+All pipeline task definitions live in `workers/estimator_workers/tasks.py`.
+
+A single entry-point task, `estimator_workers.tasks.process_document(document_id, company_id, storage_path)`, is what Next.js publishes on upload (see Upload-to-Pipeline Handoff below). It doesn't do any work itself — it immediately builds and enqueues a Celery `chain` of three stage tasks, each independently retryable:
+
+```
+process_document
+  → estimator_workers.tasks.fetch      (download the file from Supabase Storage)
+  → estimator_workers.tasks.extract    (call the vision LLM; see extraction.py)
+  → estimator_workers.tasks.parse      (validate + write ExtractionResult)
+```
+
+Celery chains implicitly pass each task's return value as the first positional argument to the next task — `fetch` returns the file as base64, which `extract` receives as its `file_b64` parameter and passes to the vision LLM; `extract` returns the LLM's raw text response, which `parse` receives as `raw_text` and validates/structures.
+
+Each of the three stage tasks shares a common wrapper, `_run_stage(task, document_id, stage, fn)`, which:
+- Logs a `DocumentProcessingEvent` row before running the stage's work
+- On success, updates that row to `succeeded`
+- On failure, updates it to `failed` and either retries (linear backoff: `10s × attempt_number`, up to `MAX_RETRIES = 3`) or, once retries are exhausted, calls `mark_document_failed` to set `Document.status = failed`
+
+`process_document` itself has no retry configuration (unlike the three stages it enqueues) — if enqueueing the chain fails outright (e.g. the broker is briefly unreachable at that exact moment), it logs a one-shot `"enqueue"` stage failure and terminal-fails the document directly, rather than leaving it stuck at `pending` with no trace. See `database/migrations/0010_data_safety_fixes.sql`'s companion code fix for why this matters.
+
+A second, independent task — `estimator_workers.tasks.match_materials(invoice_id, company_id)` — is published by the confirm action (not by upload) once a document is confirmed. It isn't part of the extraction chain and has no `DocumentProcessingEvent` equivalent; see `MaterialMatch` in `data_model.md` and the Material-matching implementation decision below.
 
 ### Progress tracking: DocumentProcessingEvent
 
@@ -125,18 +145,36 @@ Next.js owns the promotion and validation logic. Schema changes to `Invoice` or 
 
 The confirm step is intentionally minimal in MVP. A richer correction UI (editing individual fields before confirming) is post-MVP.
 
+`invoices.document_id` has a unique constraint specifically to make a raced double-confirm (two concurrent requests both passing the `status = "pending"` check before either commits) fail cleanly on the second insert instead of silently creating two invoices for the same document — see `database/migrations/0010_data_safety_fixes.sql`.
+
 ---
 
 ## Upload-to-Pipeline Handoff
 
-1. User uploads a file via the Next.js API route
-2. Next.js writes the original to Supabase Storage
+1. User uploads a file via the `uploadDocument` Server Action (`web/src/app/actions/documents.ts`)
+2. Next.js verifies the target project belongs to the caller's company (RLS alone doesn't check this — see Company Scoping), then writes the original to Supabase Storage
 3. Next.js creates a `Document` record with `status = pending` and records the storage path
-4. Next.js publishes a Celery task to RabbitMQ containing the `document_id`, `company_id`, and storage path
-5. Python worker picks up the task, begins the pipeline stage chain
+4. Next.js publishes the `estimator_workers.tasks.process_document` Celery task to RabbitMQ containing the `document_id`, `company_id`, and storage path
+5. Python worker picks up the task, begins the `fetch → extract → parse` stage chain (see Extraction Pipeline above)
 6. On terminal success: worker writes `ExtractionResult`, inserts final `DocumentProcessingEvent` with `status = succeeded`
 7. On terminal failure: worker sets `Document.status = failed`, inserts final `DocumentProcessingEvent` with `status = failed`
 8. Frontend polls by querying `DocumentProcessingEvent` to render live progress; reads `ExtractionResult` on completion
+
+### How Next.js actually publishes to RabbitMQ
+
+Step 4 is worth documenting precisely because it doesn't use the obvious API. All task publishing goes through `web/src/lib/celery.ts`, which exports `publishProcessDocumentTask` (used by upload) and `publishMatchMaterialsTask` (used by confirm, for the `match_materials` task — see Extraction Pipeline above).
+
+Both are thin wrappers around a shared `publishTask(taskName, args)` helper that **deliberately bypasses** the `celery-node` library's normal high-level API (`Client.sendTask()` / `Task.delay()`). That API is fire-and-forget — the promise chain inside its `sendTaskMessage()` is never returned to the caller, so a broker connection failure becomes a silent unhandled rejection with no way for the calling code to know publishing failed.
+
+Instead, `publishTask` drives the lower-level pieces of the same library directly:
+
+```ts
+const message = celery.createTaskMessage(taskId, taskName, args, {});
+await celery.broker.isReady();
+await celery.broker.publish(message.body, "", QUEUE, message.headers, message.properties);
+```
+
+This constructs the Celery protocol v2 task message by hand and publishes it to the `celery` queue on the default exchange, awaiting both steps — so a broker hiccup at publish time throws back up into the calling Server Action (`uploadDocument` or `confirmDocument`) instead of disappearing. For `uploadDocument` specifically, that means the user sees an inline error instead of a document silently stuck at `pending` forever with no pipeline ever having run.
 
 ---
 
