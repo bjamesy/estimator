@@ -1,13 +1,34 @@
 import base64
+import io
 import json
 import re
 
+import pillow_heif
 from anthropic import Anthropic
+from PIL import Image
 from pydantic import BaseModel
 
 from estimator_workers.config import ANTHROPIC_API_KEY
 
-SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png"}
+# Registers HEIC/HEIF in Pillow's format dispatch tables so Image.open()
+# can decode them. Registration alone touches no bytes -- Image.open()
+# still sniffs each file's magic bytes to pick a decoder, so JPEG/PNG
+# files are unaffected by this being registered.
+pillow_heif.register_heif_opener()
+
+# Types this pipeline can extract from -- not the same thing as what
+# Claude's API accepts raw. HEIC/HEIF are converted to JPEG in memory
+# first (Claude's vision API only takes JPEG/PNG/GIF/WEBP), and PDF goes
+# through the API's native "document" block rather than an "image" block.
+SUPPORTED_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/heic",
+    "image/heif",
+    "application/pdf",
+}
+
+_HEIC_MIME_TYPES = {"image/heic", "image/heif"}
 
 
 class LineItem(BaseModel):
@@ -63,8 +84,42 @@ If a multi-line description wraps across rows in the source table, join it into 
 _client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
+def _convert_heic_to_jpeg(file_bytes: bytes) -> bytes:
+    """Transient, in-memory conversion for the Claude API call only.
+
+    The converted JPEG is never written back to Supabase Storage and never
+    replaces the stored original -- the uploaded HEIC file stays exactly as
+    the user sent it, per "documents are source of truth... originals are
+    always retained" (CLAUDE.md). Conversion is needed because Claude's
+    vision API only accepts JPEG/PNG/GIF/WEBP.
+    """
+    image = Image.open(io.BytesIO(file_bytes))
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
 def call_vision_llm(file_bytes: bytes, mime_type: str) -> str:
+    if mime_type in _HEIC_MIME_TYPES:
+        file_bytes = _convert_heic_to_jpeg(file_bytes)
+        mime_type = "image/jpeg"
+
     b64 = base64.b64encode(file_bytes).decode()
+
+    if mime_type == "application/pdf":
+        # Claude's Messages API accepts PDFs natively as a "document"
+        # block -- it converts pages to images and extracts each page's
+        # text internally, all within this one request, so multi-page
+        # PDFs need no special handling here.
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": mime_type, "data": b64},
+        }
+    else:
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime_type, "data": b64},
+        }
 
     message = _client.messages.create(
         model="claude-sonnet-5",
@@ -72,13 +127,7 @@ def call_vision_llm(file_bytes: bytes, mime_type: str) -> str:
         messages=[
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": mime_type, "data": b64},
-                    },
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                ],
+                "content": [content_block, {"type": "text", "text": EXTRACTION_PROMPT}],
             }
         ],
     )

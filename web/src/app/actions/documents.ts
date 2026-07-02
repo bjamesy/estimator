@@ -6,7 +6,14 @@ import { publishProcessDocumentTask } from "@/lib/celery";
 import { tryGetCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
-const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+const ALLOWED_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+];
+const ALLOWED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif"];
 
 export async function uploadDocument(
   projectId: string,
@@ -17,8 +24,18 @@ export async function uploadDocument(
   if (!file || file.size === 0) {
     return { error: "Choose a file to upload." };
   }
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    return { error: "Only PDF, JPEG, and PNG files are supported." };
+  // Extension fallback: browsers report an empty file.type for formats
+  // they don't natively recognize (HEIC on non-Safari, commonly), which
+  // would wrongly reject a valid upload on MIME type alone. The worker
+  // side guesses type from the extension anyway (_guess_mime_type in
+  // workers/estimator_workers/tasks.py), so extension is an equally
+  // authoritative signal here.
+  const lowerName = file.name.toLowerCase();
+  const allowed =
+    ALLOWED_TYPES.includes(file.type) ||
+    ALLOWED_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+  if (!allowed) {
+    return { error: "Only PDF, JPEG, PNG, and HEIC files are supported." };
   }
 
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();

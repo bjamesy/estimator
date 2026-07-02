@@ -80,7 +80,15 @@ Each of the three stage tasks shares a common wrapper, `_run_stage(task, documen
 
 A second, independent task — `estimator_workers.tasks.match_materials(invoice_id, company_id)` — is published by the confirm action (not by upload) once a document is confirmed. It isn't part of the extraction chain and has no `DocumentProcessingEvent` equivalent; see `MaterialMatch` in `data_model.md` and the Material-matching implementation decision below.
 
-### Progress tracking: DocumentProcessingEvent
+### Supported file types
+
+The pipeline accepts JPEG, PNG, HEIC/HEIF, and PDF (`SUPPORTED_MIME_TYPES` in `workers/estimator_workers/extraction.py`; mirrored at upload by `ALLOWED_TYPES` in `web/src/app/actions/documents.ts`, which also falls back to extension matching because some browsers report an empty MIME type for HEIC). Three of these are not what they appear at the API boundary:
+
+- **HEIC/HEIF** (iPhone's default camera format) isn't accepted by Claude's vision API (JPEG/PNG/GIF/WEBP only), so `call_vision_llm` converts it to JPEG **in memory, transiently, for the API call only** — the converted bytes are never written to Storage and never replace the stored original, per "documents are source of truth... originals are always retained." The file in Storage stays byte-identical to what the user uploaded (verified live: downloaded the stored object after a full pipeline run and confirmed it identical to the source HEIC).
+- **PDF** goes through Claude's native `document` content block rather than an `image` block — Anthropic converts pages to images and extracts per-page text internally, all within one request, so multi-page PDFs need no special handling in this codebase. API limits (32MB request / up to 600 pages) are far beyond any realistic invoice and are not separately enforced here.
+- A corrupt/undecodable file simply raises inside the `extract` stage and flows through `_run_stage`'s normal retry/terminal-failure machinery — no special error handling exists for conversion failures.
+
+Mime type is guessed from the storage filename's extension (`_guess_mime_type` in `tasks.py`), not from content sniffing — acceptable because the upload action controls the storage filename.
 
 The pipeline never writes to `Document.status`. Fine-grained progress lives entirely in an append-only `DocumentProcessingEvent` table. Each stage attempt — including every Celery retry — inserts its own row.
 
@@ -151,7 +159,7 @@ The confirm step is intentionally minimal in MVP. A richer correction UI (editin
 
 ## Upload-to-Pipeline Handoff
 
-1. User uploads a file via the `uploadDocument` Server Action (`web/src/app/actions/documents.ts`)
+1. User uploads a file via the `uploadDocument` Server Action (`web/src/app/actions/documents.ts`). The upload form (`upload-form.tsx`) auto-submits the moment a file is selected — no separate Upload button — and on touch devices additionally offers a "Take photo" button that opens the camera directly (`capture="environment"` on the shared hidden file input; the button is shown via CSS `pointer: coarse` detection, since screen width is a poor proxy for "has a camera")
 2. Next.js verifies the target project belongs to the caller's company (RLS alone doesn't check this — see Company Scoping), then writes the original to Supabase Storage
 3. Next.js creates a `Document` record with `status = pending` and records the storage path
 4. Next.js publishes the `estimator_workers.tasks.process_document` Celery task to RabbitMQ containing the `document_id`, `company_id`, and storage path

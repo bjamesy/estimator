@@ -50,6 +50,10 @@ def _guess_mime_type(storage_path: str) -> str:
         return "image/png"
     if lower.endswith(".pdf"):
         return "application/pdf"
+    if lower.endswith(".heic"):
+        return "image/heic"
+    if lower.endswith(".heif"):
+        return "image/heif"
     return "application/octet-stream"
 
 
@@ -68,12 +72,9 @@ def extract(
     self: Task, file_b64: str, document_id: str, company_id: str, storage_path: str
 ) -> str:
     def _extract() -> str:
-        # KNOWN LIMITATION: PDFs are accepted at upload but not supported
-        # here yet, so a PDF document will retry MAX_RETRIES times and then
-        # terminally fail every time. See web/src/app/actions/documents.ts.
         mime_type = _guess_mime_type(storage_path)
         if mime_type not in SUPPORTED_MIME_TYPES:
-            raise ValueError(f"Extraction currently only supports JPEG/PNG. Got: {mime_type}")
+            raise ValueError(f"Extraction does not support this file type. Got: {mime_type}")
         file_bytes = base64.b64decode(file_b64)
         return call_vision_llm(file_bytes, mime_type)
 
