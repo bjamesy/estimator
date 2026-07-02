@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 import { CreateFromProjectForm } from "@/app/(app)/estimates/create-from-project-form";
-import { NewEstimateForm } from "@/app/(app)/estimates/new-estimate-form";
 
 import { DocumentsTable } from "./documents-table";
 import { UploadForm } from "./upload-form";
@@ -65,7 +64,6 @@ export default async function ProjectPage({
 
       <div className="flex flex-col gap-3 border-t pt-6">
         <h2 className="text-lg font-semibold">Estimates</h2>
-        <NewEstimateForm projectId={project.id} />
         <CreateFromProjectForm projectId={project.id} />
         {estimates && estimates.length > 0 ? (
           <ul className="flex flex-col gap-2">

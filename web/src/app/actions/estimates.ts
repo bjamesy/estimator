@@ -36,17 +36,11 @@ async function assertEstimateOwnership(
 
 // project_id is optional -- Estimates draw on the company-wide historical
 // knowledge base, not a specific project's, and aren't required to belong
-// to one. See docs/architecture.md -> Estimate-building data flow.
-//
-// projectId is pre-bound when this is called from a project's page
-// (NewEstimateForm projectId={...}); otherwise it's null and the actual
-// value (if any) comes from the top-level /estimates page's project
-// picker, submitted as formData's "project_id" field.
-export async function createEstimate(
-  projectId: string | null,
-  _prevState: unknown,
-  formData: FormData,
-) {
+// to one. See docs/architecture.md -> Estimate-building data flow. Only
+// called from the top-level /estimates page's picker (empty selection ->
+// no project); a project's own page instead offers
+// createEstimateFromProject, which is strictly more useful there.
+export async function createEstimate(_prevState: unknown, formData: FormData) {
   const name = formData.get("name") as string;
   if (!name) {
     return { error: "Estimate name is required." };
@@ -59,7 +53,7 @@ export async function createEstimate(
   const supabase = await createClient();
 
   const rawProjectId = formData.get("project_id") as string | null;
-  const resolvedProjectId = projectId ?? (rawProjectId ? rawProjectId : null);
+  const resolvedProjectId = rawProjectId ? rawProjectId : null;
 
   const { data, error } = await supabase
     .from("estimates")
