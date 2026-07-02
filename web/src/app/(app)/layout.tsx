@@ -14,6 +14,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/projects" className="text-sm text-muted-foreground hover:text-foreground">
             Projects
           </Link>
+          <Link href="/estimates" className="text-sm text-muted-foreground hover:text-foreground">
+            Estimates
+          </Link>
           <Link href="/search" className="text-sm text-muted-foreground hover:text-foreground">
             Search
           </Link>

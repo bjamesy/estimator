@@ -19,20 +19,22 @@ import { HistoricalSearch } from "./historical-search";
 export default async function EstimatePage({
   params,
 }: {
-  params: Promise<{ id: string; estimateId: string }>;
+  params: Promise<{ estimateId: string }>;
 }) {
-  const { id: projectId, estimateId } = await params;
+  const { estimateId } = await params;
   const supabase = await createClient();
 
   const { data: estimate } = await supabase
     .from("estimates")
-    .select("id, project_id, name")
+    .select("id, project_id, name, projects(name)")
     .eq("id", estimateId)
     .single();
 
-  if (!estimate || estimate.project_id !== projectId) {
+  if (!estimate) {
     notFound();
   }
+
+  const projectName = (estimate.projects as unknown as { name: string } | null)?.name;
 
   const { data: lines } = await supabase
     .from("estimate_lines")
@@ -42,14 +44,24 @@ export default async function EstimatePage({
 
   const grandTotal = (lines ?? []).reduce((sum, l) => sum + l.total, 0);
 
-  const addBlankLine = addBlankEstimateLine.bind(null, estimateId, projectId);
+  const addBlankLine = addBlankEstimateLine.bind(null, estimateId);
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground underline">
-          &larr; Back to project
-        </Link>
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Link href="/estimates" className="underline">
+            &larr; Back to estimates
+          </Link>
+          {estimate.project_id && (
+            <>
+              <span>&middot;</span>
+              <Link href={`/projects/${estimate.project_id}`} className="underline">
+                Project: {projectName}
+              </Link>
+            </>
+          )}
+        </div>
         <h1 className="mt-2 text-2xl font-semibold">{estimate.name}</h1>
       </div>
 
@@ -87,7 +99,6 @@ export default async function EstimatePage({
                     // after the fact.
                     key={`${line.id}-${line.total}`}
                     line={line}
-                    projectId={projectId}
                     estimateId={estimateId}
                   />
                 ))}
@@ -103,7 +114,7 @@ export default async function EstimatePage({
       </div>
 
       <div className="border-t pt-6">
-        <HistoricalSearch projectId={projectId} estimateId={estimateId} />
+        <HistoricalSearch estimateId={estimateId} />
       </div>
     </div>
   );

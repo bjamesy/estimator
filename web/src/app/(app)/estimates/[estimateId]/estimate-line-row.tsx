@@ -18,18 +18,16 @@ type EstimateLine = {
 
 export function EstimateLineRow({
   line,
-  projectId,
   estimateId,
 }: {
   line: EstimateLine;
-  projectId: string;
   estimateId: string;
 }) {
-  const updateAction = updateEstimateLine.bind(null, line.id, projectId, estimateId);
+  const updateAction = updateEstimateLine.bind(null, line.id, estimateId);
   const [state, formAction, pending] = useActionState(updateAction, null);
 
   async function handleDelete() {
-    await deleteEstimateLine(line.id, projectId, estimateId);
+    await deleteEstimateLine(line.id, estimateId);
   }
 
   return (

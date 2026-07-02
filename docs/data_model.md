@@ -11,14 +11,14 @@ Related: [Architecture](./architecture.md), [Product Spec](./mvp/product-mvp.md)
 ```
 Company
 ├── Project
-│   ├── Document
-│   │   ├── DocumentProcessingEvent   (1:N — one row per stage attempt/retry)
-│   │   ├── ExtractionResult          (1:N — retained permanently)
-│   │   └── Invoice                   (0/1:1 — promoted on confirm)
-│   │       └── LineItem              (1:N)
-│   │           └── MaterialMatch     (1:1 — links to MaterialCatalog)
-│   └── Estimate                      (1:N)
-│       └── EstimateLine               (1:N — snapshot, optional FK back to a source LineItem)
+│   └── Document
+│       ├── DocumentProcessingEvent   (1:N — one row per stage attempt/retry)
+│       ├── ExtractionResult          (1:N — retained permanently)
+│       └── Invoice                   (0/1:1 — promoted on confirm)
+│           └── LineItem              (1:N)
+│               └── MaterialMatch     (1:1 — links to MaterialCatalog)
+├── Estimate                          (1:N — company-scoped; optional FK to Project)
+│   └── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
@@ -29,6 +29,8 @@ Company
 `Supplier` is the one entity with no `company_id` — it's a deliberate global exception. See below.
 
 Every FK in the `Project → Document → (ExtractionResult | Invoice → LineItem → MaterialMatch)` chain is `ON DELETE RESTRICT`, not `CASCADE` — a project/document/invoice/line item with dependent historical data cannot be deleted at all. This enforces "documents are source of truth... always retained" at the schema level, not just as a convention; there is no delete-project (or delete-document, delete-invoice, ...) feature in the app today, and the schema doesn't allow one to accidentally destroy historical data if such a feature is ever added without this in mind.
+
+`Estimate.project_id` is a nullable, optional FK to `Project` (`ON DELETE SET NULL`) — unlike the `RESTRICT` chain above, an `Estimate` is not historical purchasing data and isn't required to belong to a project; deleting a project clears the reference on any linked estimates rather than blocking the delete or cascading the estimate away. See `Estimate` below.
 
 ---
 
@@ -212,13 +214,13 @@ Company-specific data about a supplier relationship. Company-scoped, unlike `Sup
 ```
 Estimate
   id
-  project_id      FK → Project
+  project_id      FK → Project, nullable — optional reference only, not required
   company_id      FK → Company
   name            e.g. "Initial Estimate", "Rev 2"
   created_at
 ```
 
-Scoped to a project. No lifecycle/status field in MVP — an estimate is always an editable draft; there is no finalize/send step.
+Not scoped to a project — Estimates draw on the company-wide historical knowledge base (`search_line_items` has never been project-scoped) and may optionally reference one `Project` for organizational purposes only. There is no promotion/conversion flow between an `Estimate` and a `Project`: a `Project` holds actual purchasing history (receipts/invoices), while an `Estimate` is a projection that never becomes purchasing history itself. No lifecycle/status field in MVP — an estimate is always an editable draft; there is no finalize/send step.
 
 ## EstimateLine
 

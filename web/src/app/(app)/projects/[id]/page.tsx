@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
+import { NewEstimateForm } from "@/app/(app)/estimates/new-estimate-form";
+
 import { DocumentsTable } from "./documents-table";
-import { NewEstimateForm } from "./new-estimate-form";
 import { UploadForm } from "./upload-form";
 
 export default async function ProjectPage({
@@ -69,7 +70,7 @@ export default async function ProjectPage({
             {estimates.map((estimate) => (
               <li key={estimate.id}>
                 <Link
-                  href={`/projects/${project.id}/estimates/${estimate.id}`}
+                  href={`/estimates/${estimate.id}`}
                   className="block rounded-md border px-4 py-3 hover:bg-accent"
                 >
                   {estimate.name}
@@ -78,7 +79,7 @@ export default async function ProjectPage({
             ))}
           </ul>
         ) : (
-          <p className="text-muted-foreground">No estimates yet.</p>
+          <p className="text-muted-foreground">No estimates linked to this project yet.</p>
         )}
       </div>
     </div>

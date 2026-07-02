@@ -34,7 +34,19 @@ async function assertEstimateOwnership(
   return null;
 }
 
-export async function createEstimate(projectId: string, _prevState: unknown, formData: FormData) {
+// project_id is optional -- Estimates draw on the company-wide historical
+// knowledge base, not a specific project's, and aren't required to belong
+// to one. See docs/architecture.md -> Estimate-building data flow.
+//
+// projectId is pre-bound when this is called from a project's page
+// (NewEstimateForm projectId={...}); otherwise it's null and the actual
+// value (if any) comes from the top-level /estimates page's project
+// picker, submitted as formData's "project_id" field.
+export async function createEstimate(
+  projectId: string | null,
+  _prevState: unknown,
+  formData: FormData,
+) {
   const name = formData.get("name") as string;
   if (!name) {
     return { error: "Estimate name is required." };
@@ -46,9 +58,12 @@ export async function createEstimate(projectId: string, _prevState: unknown, for
   }
   const supabase = await createClient();
 
+  const rawProjectId = formData.get("project_id") as string | null;
+  const resolvedProjectId = projectId ?? (rawProjectId ? rawProjectId : null);
+
   const { data, error } = await supabase
     .from("estimates")
-    .insert({ project_id: projectId, company_id: companyId, name })
+    .insert({ project_id: resolvedProjectId, company_id: companyId, name })
     .select("id")
     .single();
 
@@ -56,15 +71,17 @@ export async function createEstimate(projectId: string, _prevState: unknown, for
     return { error: error.message };
   }
 
-  revalidatePath(`/projects/${projectId}`);
-  redirect(`/projects/${projectId}/estimates/${data.id}`);
+  revalidatePath("/estimates");
+  if (resolvedProjectId) {
+    revalidatePath(`/projects/${resolvedProjectId}`);
+  }
+  redirect(`/estimates/${data.id}`);
 }
 
 // Snapshot, not a live reference -- source_line_item_id is provenance
 // only. See docs/architecture.md -> Estimate-building data flow.
 export async function addHistoricalLineToEstimate(
   estimateId: string,
-  projectId: string,
   sourceLineItemId: string,
   description: string,
   quantity: number,
@@ -96,7 +113,7 @@ export async function addHistoricalLineToEstimate(
     return { error: error.message };
   }
 
-  revalidatePath(`/projects/${projectId}/estimates/${estimateId}`);
+  revalidatePath(`/estimates/${estimateId}`);
   return { error: null };
 }
 
@@ -105,7 +122,7 @@ export async function addHistoricalLineToEstimate(
 // line" button, which requires a (formData) => void | Promise<void>
 // signature. Failure just means no new row appears; acceptable for a
 // fixed-default insert this unlikely to fail.
-export async function addBlankEstimateLine(estimateId: string, projectId: string): Promise<void> {
+export async function addBlankEstimateLine(estimateId: string): Promise<void> {
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
   if (companyError !== null) {
     return;
@@ -128,12 +145,11 @@ export async function addBlankEstimateLine(estimateId: string, projectId: string
     total: 0,
   });
 
-  revalidatePath(`/projects/${projectId}/estimates/${estimateId}`);
+  revalidatePath(`/estimates/${estimateId}`);
 }
 
 export async function updateEstimateLine(
   lineId: string,
-  projectId: string,
   estimateId: string,
   _prevState: unknown,
   formData: FormData,
@@ -163,13 +179,12 @@ export async function updateEstimateLine(
     return { error: error.message };
   }
 
-  revalidatePath(`/projects/${projectId}/estimates/${estimateId}`);
+  revalidatePath(`/estimates/${estimateId}`);
   return { error: null };
 }
 
 export async function deleteEstimateLine(
   lineId: string,
-  projectId: string,
   estimateId: string,
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
@@ -179,6 +194,6 @@ export async function deleteEstimateLine(
     return { error: error.message };
   }
 
-  revalidatePath(`/projects/${projectId}/estimates/${estimateId}`);
+  revalidatePath(`/estimates/${estimateId}`);
   return { error: null };
 }

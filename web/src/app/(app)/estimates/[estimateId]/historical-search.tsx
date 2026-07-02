@@ -8,13 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-export function HistoricalSearch({
-  projectId,
-  estimateId,
-}: {
-  projectId: string;
-  estimateId: string;
-}) {
+export function HistoricalSearch({ estimateId }: { estimateId: string }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -35,7 +29,6 @@ export function HistoricalSearch({
     setAddingId(result.line_item_id);
     await addHistoricalLineToEstimate(
       estimateId,
-      projectId,
       result.line_item_id,
       result.description,
       result.quantity,

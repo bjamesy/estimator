@@ -17,11 +17,13 @@ Project
 ├── Documents       (original uploaded files — always preserved)
 ├── Invoices        (extracted from documents)
 │   └── Line Items  (supplier, date, material, qty, unit price, total)
-├── Suppliers
-└── Estimates       (consume line items as historical references)
+└── Suppliers
+
+Estimates           (company-wide; consume historical Line Items from any Project;
+                      may optionally reference one Project, but never required to)
 ```
 
-Invoices produce line items. Line items become the searchable historical knowledge base. Estimates consume that knowledge.
+Invoices produce line items. Line items become the company-wide searchable historical knowledge base. Estimates consume that knowledge and may optionally reference a Project, but are not scoped to one.
 
 ## MVP Scope
 
