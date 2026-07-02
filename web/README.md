@@ -12,3 +12,5 @@ npm run dev
 Requires `web/.env` populated (see `.env.example`) and `workers/` running alongside this for uploads/confirms to actually process — this app only publishes tasks to RabbitMQ, it doesn't consume them.
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Or run the whole stack (this, `workers/`, and a local RabbitMQ) via `docker compose up --build` from the repo root — see the [root README](../README.md#run-locally).

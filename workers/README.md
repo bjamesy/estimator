@@ -24,3 +24,5 @@ set -a && source .env && set +a
 ```
 
 Requires a reachable RabbitMQ instance (`MESSAGE_BROKER_URL`, e.g. CloudAMQP) and must be running alongside `web/` for uploads and confirms to actually process — `web/` only publishes tasks, this is what consumes them.
+
+Or run the whole stack (this, `web/`, and a local RabbitMQ) via `docker compose up --build` from the repo root — see the [root README](../README.md#run-locally).

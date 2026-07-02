@@ -1,0 +1,46 @@
+services:
+  # Local message broker. Supabase (Postgres/Auth/Storage) stays a hosted
+  # cloud project even for local dev -- this project has never run a local
+  # Postgres -- so this is the one infra piece worth self-hosting here.
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672" # AMQP, consumed by web/ and workers/
+      - "15672:15672" # management UI: http://localhost:15672 (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./web/.env
+    environment:
+      # Overrides whatever broker (e.g. CloudAMQP) web/.env has configured
+      # -- Supabase/Anthropic settings still come from the env file
+      # untouched. See docs/architecture.md -> "How Next.js actually
+      # publishes to RabbitMQ".
+      MESSAGE_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+
+  workers:
+    build: ./workers
+    env_file:
+      - ./workers/.env
+    environment:
+      MESSAGE_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./workers:/app

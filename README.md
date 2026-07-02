@@ -16,11 +16,21 @@ database/     Schema migrations -- shared source of truth for web/ and workers/
 
 You'll need:
 
-1. **A Supabase project.** Apply every file in `database/migrations/` in order (`0001` through `0009` as of this writing — see `database/README.md`), enable email auth (Authentication → Providers), and copy the project URL and keys from Project Settings → API into `web/.env` and `workers/.env` (see each directory's `.env.example`). Supabase's current dashboard uses **Publishable key** and **Secret key** naming (not the older "anon key"/"service_role key"), which is what `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` refer to.
-2. **A RabbitMQ instance** (e.g. [CloudAMQP](https://www.cloudamqp.com), free tier is fine). Connection string goes in `workers/.env` as `MESSAGE_BROKER_URL`, and in `web/.env` as `MESSAGE_BROKER_URL` too — Next.js publishes tasks directly to the broker.
+1. **A Supabase project.** Apply every file in `database/migrations/` in order (`0001` through `0010` as of this writing — see `database/README.md`), enable email auth (Authentication → Providers), and copy the project URL and keys from Project Settings → API into `web/.env` and `workers/.env` (see each directory's `.env.example`). Supabase's current dashboard uses **Publishable key** and **Secret key** naming (not the older "anon key"/"service_role key"), which is what `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` refer to. This stays a hosted cloud project in both run modes below — this repo has no local Postgres.
+2. **A RabbitMQ instance**, unless you're using `docker compose` (below), which runs one for you. For running `web/`/`workers/` natively, use e.g. [CloudAMQP](https://www.cloudamqp.com) (free tier is fine); connection string goes in `workers/.env` and `web/.env` as `MESSAGE_BROKER_URL` — Next.js publishes tasks directly to the broker.
 3. **An Anthropic API key** for extraction and material matching, in `workers/.env` as `ANTHROPIC_API_KEY`.
 
 ## Run locally
+
+### Option A: Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Brings up all three pieces: a local RabbitMQ (`docker-compose.yml` overrides `MESSAGE_BROKER_URL` to point at it, regardless of what's in your `.env` files), `web/` on [http://localhost:3000](http://localhost:3000) with hot reload via a bind mount, and `workers/` consuming tasks from it. RabbitMQ's management UI is at [http://localhost:15672](http://localhost:15672) (guest/guest). Still requires `web/.env` and `workers/.env` populated per steps 1 and 3 above — Compose reads Supabase/Anthropic settings from those files, only the broker is swapped for the local container. Code changes in `web/src` pick up immediately (Next dev server); changes in `workers/` need `docker compose restart workers` (no autoreload configured for the Celery process).
+
+### Option B: Run natively
 
 ```bash
 # web
@@ -31,4 +41,4 @@ cd workers && python3.13 -m venv .venv && .venv/bin/pip install -e .
 set -a && source .env && set +a && .venv/bin/celery -A estimator_workers.celery_app worker --loglevel=info
 ```
 
-Both need to be running for uploads to actually process — `web/` publishes the extraction task, `workers/` consumes it.
+Both need to be running for uploads to actually process — `web/` publishes the extraction task, `workers/` consumes it. Requires a reachable RabbitMQ instance (step 2 above); `docker compose up rabbitmq` on its own is a fine way to get one without a CloudAMQP account (`MESSAGE_BROKER_URL=amqp://guest:guest@localhost:5672//` in both `.env` files in that case).
