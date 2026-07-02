@@ -187,6 +187,8 @@ Neither side of this app pins an AMQP heartbeat, and the effective behavior is a
 
 This trade-off (an extra connect handshake per publish, in exchange for zero idle-connection heartbeat traffic) is worth revisiting once there's real production traffic where either the added latency or dead-connection detection start to matter more than avoiding CloudAMQP's per-message metering pre-launch.
 
+The same quota-consciousness is why `docker-compose.yml` runs its own local RabbitMQ container instead of pointing at this CloudAMQP instance for local dev — see the comment on the `rabbitmq` service there.
+
 ---
 
 ## Open Questions (Resolved)

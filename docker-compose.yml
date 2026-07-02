@@ -1,7 +1,18 @@
 services:
-  # Local message broker. Supabase (Postgres/Auth/Storage) stays a hosted
-  # cloud project even for local dev -- this project has never run a local
-  # Postgres -- so this is the one infra piece worth self-hosting here.
+  # Local message broker -- deliberately NOT the CloudAMQP instance in
+  # web/.env and workers/.env's MESSAGE_BROKER_URL. Confirmed with the
+  # user (2026-07-02): docker-compose is meant to be a fully local,
+  # zero-cloud-quota dev stack, so every docker-compose session gets its
+  # own throwaway broker rather than spending CloudAMQP message quota on
+  # local/test traffic -- the same quota-consciousness that motivated
+  # disabling AMQP heartbeats (see docs/architecture.md -> "Heartbeats
+  # are disabled"). This means docker-compose and the native run path
+  # (README.md -> "Option B") talk to different brokers by design; that's
+  # fine since RabbitMQ's wire behavior doesn't vary between a local
+  # container and CloudAMQP's managed one. Supabase (Postgres/Auth/
+  # Storage) stays a hosted cloud project either way -- this project has
+  # never run local Postgres -- so RabbitMQ is the one infra piece worth
+  # self-hosting here.
   rabbitmq:
     image: rabbitmq:3-management-alpine
     ports:
