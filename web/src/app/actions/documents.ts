@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { publishProcessDocumentTask } from "@/lib/celery";
-import { getCurrentCompanyId } from "@/lib/company";
+import { tryGetCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png"];
@@ -21,8 +21,24 @@ export async function uploadDocument(
     return { error: "Only PDF, JPEG, and PNG files are supported." };
   }
 
-  const companyId = await getCurrentCompanyId();
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
   const supabase = await createClient();
+
+  // documents' RLS policy only validates the new row's own company_id,
+  // not that project_id actually belongs to that company -- verify
+  // explicitly before writing anything (storage upload included).
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!project) {
+    return { error: "Project not found." };
+  }
 
   // Path prefix must be company_id -- the storage RLS policy checks the
   // first path segment. See database/migrations/0005_storage_bucket.sql.

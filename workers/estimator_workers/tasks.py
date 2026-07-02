@@ -2,6 +2,7 @@ import base64
 from typing import Callable, TypeVar
 
 from celery import Task, chain
+from postgrest.exceptions import APIError
 
 from estimator_workers.celery_app import app
 from estimator_workers.events import finish_event, mark_document_failed, start_event
@@ -12,6 +13,8 @@ from estimator_workers.extraction import (
 )
 from estimator_workers.matching import match_line_items_to_catalog
 from estimator_workers.supabase_client import get_supabase
+
+POSTGRES_UNIQUE_VIOLATION = "23505"
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 10
@@ -93,11 +96,25 @@ def parse(
 
 @app.task(name="estimator_workers.tasks.process_document")
 def process_document(document_id: str, company_id: str, storage_path: str) -> None:
-    chain(
-        fetch.s(document_id, company_id, storage_path),
-        extract.s(document_id, company_id, storage_path),
-        parse.s(document_id, company_id, storage_path),
-    ).apply_async()
+    try:
+        chain(
+            fetch.s(document_id, company_id, storage_path),
+            extract.s(document_id, company_id, storage_path),
+            parse.s(document_id, company_id, storage_path),
+        ).apply_async()
+    except Exception as exc:
+        # If enqueueing the chain itself fails (e.g. the broker is briefly
+        # unreachable at this exact moment), none of fetch/extract/parse
+        # ever run, so _run_stage's event logging and failure handling
+        # never fire either -- without this, the document would be stuck
+        # at "pending" forever with zero DocumentProcessingEvent rows and
+        # no way for the user to know anything went wrong. This task has
+        # no retry/bind config (unlike fetch/extract/parse), so this is a
+        # one-shot terminal failure, not a retryable one.
+        event_id = start_event(document_id, "enqueue", 1)
+        finish_event(event_id, "failed", str(exc))
+        mark_document_failed(document_id)
+        raise
 
 
 # Runs after user confirmation, not during extraction -- keeps "confirm what
@@ -128,6 +145,13 @@ def match_materials(self: Task, invoice_id: str, company_id: str) -> None:
             .data
         )
         catalog_ids = {m["id"] for m in catalog}
+        # Tracks names already resolved to an id in this run (both
+        # pre-existing catalog entries and ones just created below),
+        # case-insensitive to match the DB's unique index. Without this,
+        # two line items on the same invoice that both canonicalize to the
+        # same not-yet-catalogued name (e.g. two "PT 2x8" rows) would each
+        # insert their own MaterialCatalog row.
+        ids_by_lower_name = {m["name"].lower(): m["id"] for m in catalog}
 
         result = match_line_items_to_catalog(line_items, catalog)
 
@@ -137,14 +161,39 @@ def match_materials(self: Task, invoice_id: str, company_id: str) -> None:
                 material_id = match.matched_material_id
             else:
                 name = match.new_material_name or "Unknown material"
-                new_material = (
-                    supabase.table("material_catalog")
-                    .insert({"company_id": company_id, "name": name})
-                    .execute()
-                    .data[0]
-                )
-                material_id = new_material["id"]
-                catalog_ids.add(material_id)
+                existing_id = ids_by_lower_name.get(name.lower())
+                if existing_id:
+                    material_id = existing_id
+                else:
+                    try:
+                        new_material = (
+                            supabase.table("material_catalog")
+                            .insert({"company_id": company_id, "name": name})
+                            .execute()
+                            .data[0]
+                        )
+                        material_id = new_material["id"]
+                    except APIError as exc:
+                        # Backstop for a race this run's own in-loop dedup
+                        # can't see: a concurrent match_materials run (or a
+                        # retry after this run's own earlier partial
+                        # failure) already created this name. Re-fetch
+                        # instead of failing the whole task.
+                        if exc.code != POSTGRES_UNIQUE_VIOLATION:
+                            raise
+                        existing = (
+                            supabase.table("material_catalog")
+                            .select("id")
+                            .eq("company_id", company_id)
+                            .ilike("name", name)
+                            .limit(1)
+                            .single()
+                            .execute()
+                            .data
+                        )
+                        material_id = existing["id"]
+                    catalog_ids.add(material_id)
+                    ids_by_lower_name[name.lower()] = material_id
 
             rows.append(
                 {"line_item_id": match.line_item_id, "material_id": material_id, "status": "proposed"}

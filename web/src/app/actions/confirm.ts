@@ -6,6 +6,15 @@ import { publishMatchMaterialsTask } from "@/lib/celery";
 import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
 
+const POSTGRES_UNIQUE_VIOLATION = "23505";
+
+// Postgres ILIKE treats % and _ as wildcards; escape them (and the escape
+// character itself) so a supplier name containing either is matched
+// literally instead of as a pattern.
+function escapeLikePattern(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export async function confirmDocument(documentId: string): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
@@ -49,7 +58,7 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
   const { data: existingSupplier } = await supabase
     .from("suppliers")
     .select("id")
-    .ilike("name", supplierName)
+    .ilike("name", escapeLikePattern(supplierName))
     .limit(1)
     .maybeSingle();
 
@@ -96,6 +105,14 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
     .select("id")
     .single();
 
+  if (invoiceError?.code === POSTGRES_UNIQUE_VIOLATION) {
+    // A concurrent confirmDocument call for this same document already
+    // won the race (e.g. a double-click, or two tabs open on the same
+    // document) -- the unique constraint on invoices.document_id caught
+    // it. That request's Invoice/LineItem promotion stands; this one
+    // should not create a duplicate.
+    return { error: "This document was already confirmed." };
+  }
   if (invoiceError || !invoice) {
     return { error: `Could not create invoice: ${invoiceError?.message}` };
   }

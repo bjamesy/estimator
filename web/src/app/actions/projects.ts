@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { getCurrentCompanyId } from "@/lib/company";
+import { tryGetCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
 export async function createProject(_prevState: unknown, formData: FormData) {
@@ -12,7 +12,10 @@ export async function createProject(_prevState: unknown, formData: FormData) {
     return { error: "Project name is required." };
   }
 
-  const companyId = await getCurrentCompanyId();
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
   const supabase = await createClient();
 
   const { data, error } = await supabase

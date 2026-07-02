@@ -25,3 +25,24 @@ export async function getCurrentCompanyId(): Promise<string> {
 
   return data.company_id;
 }
+
+// getCurrentCompanyId() throws (a company_members row missing for a
+// logged-in user is a real invariant violation, not an expected failure
+// mode), but every server action calling it otherwise returns
+// { error: string | null } for every other failure path, and previously
+// called it unguarded -- a throw here surfaced as Next's generic
+// unhandled-server-action error instead of the action's own inline
+// message. This centralizes the conversion so each call site doesn't
+// have to repeat the same try/catch.
+export async function tryGetCurrentCompanyId(): Promise<
+  { companyId: string; error: null } | { companyId: null; error: string }
+> {
+  try {
+    return { companyId: await getCurrentCompanyId(), error: null };
+  } catch (err) {
+    return {
+      companyId: null,
+      error: err instanceof Error ? err.message : "Could not resolve your company.",
+    };
+  }
+}

@@ -187,4 +187,27 @@ Also fixed a controlled/uncontrolled input console warning found during testing,
 | ~~Material-matching implementation~~ | ~~Phase 5~~ | ✅ Resolved — `architecture.md` → Open Questions |
 | ~~Estimate-building data flow + Estimate schema~~ | ~~Phase 7~~ | ✅ Resolved — `architecture.md` → Open Questions, `data_model.md` → Estimate |
 
+---
+
+## Post-review fixes (2026-07-02)
+
+A multi-angle code review of the full MVP surfaced 10 confirmed correctness bugs (see `database/migrations/0010_data_safety_fixes.sql` for the DB-level fixes). All were fixable without a product decision and have been fixed and verified end-to-end against the live Supabase project with no regressions:
+
+- **Duplicate invoices on double-confirm** — `invoices.document_id` now has a unique constraint; the losing concurrent request gets a clean "already confirmed" error instead of silently duplicating the invoice.
+- **CASCADE delete could destroy historical data** — the FK chain from `projects` down through `documents`/`extraction_results`/`invoices`/`line_items`/`material_matches` is now `ON DELETE RESTRICT`, not `CASCADE`. There's no delete-project feature today, but the schema no longer allows it to happen by accident either.
+- **One illegible field permanently failed the whole document** — `extraction.py`'s `LineItem` model now matches what the prompt already told the LLM (nullable numeric fields), and any line item that comes back with a null number is dropped rather than crashing pydantic validation and burning through retries against a deterministically-failing input.
+- **`process_document`'s enqueue failure left documents stuck at "pending" forever** — now wrapped in try/except; a broker-unreachable moment at enqueue time correctly logs an event and terminal-fails the document instead of leaving zero trace.
+- **Duplicate `MaterialCatalog` entries** — `match_materials` now dedupes by name (case-insensitive) within a single run before inserting, and a `unique(company_id, lower(name))` index is the backstop for a concurrent/retried run, with the insert path catching the conflict and re-fetching instead of failing.
+- **Cross-tenant `estimate_lines` insertion** — `addHistoricalLineToEstimate`/`addBlankEstimateLine` now verify the target estimate belongs to the caller's company before inserting (RLS alone only checked the new row's own `company_id`, not the referenced estimate's owner).
+- **No `project_id`/`company_id` ownership check on upload** — `uploadDocument` now verifies the project belongs to the caller's company before writing anything.
+- **Unescaped `%`/`_` in supplier `ilike` lookup** — now escaped, so a supplier name containing a literal wildcard character is matched exactly instead of as a pattern.
+- **"Still processing" shown for terminally-failed documents** — the review page now checks `document.status === "failed"` and shows the actual failure stage/error instead of telling the user to wait for something that will never complete.
+- **`handleFlag` showed "flagged" even when the update failed** — now checks the returned error before updating the optimistic UI state.
+
+Also partially addressed (full fix needs a product decision, not made here): the frontend polling for material matches now caps out after ~1 minute and tells the user matching may have failed, instead of polling forever — `match_materials` still has no way to write a definitive "failed" signal for the frontend to detect, which would need a schema/design decision.
+
+**Deliberately not fixed**, flagged for a product decision instead:
+- **Unsanitized error messages in `document_processing_events.error_message`** — could theoretically leak internal infra details (not credentials specifically — verified unlikely in the libraries this project uses) to the confirming user. Fixing this properly means deciding what's safe to redact vs. useful to keep for debugging, which is a judgment call, not a mechanical fix.
+- **PDF accepted at upload but never supported by extraction** — this is an intentional, already-documented MVP limitation (see the `KNOWN LIMITATION` comment in `workers/estimator_workers/tasks.py`), not an oversight. Whether to reject PDFs at upload time, warn the user, or build PDF support is a scope decision.
+
 All phases (0–7) are now complete. All three open architecture questions are resolved.

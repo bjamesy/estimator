@@ -28,6 +28,8 @@ Company
 
 `Supplier` is the one entity with no `company_id` — it's a deliberate global exception. See below.
 
+Every FK in the `Project → Document → (ExtractionResult | Invoice → LineItem → MaterialMatch)` chain is `ON DELETE RESTRICT`, not `CASCADE` — a project/document/invoice/line item with dependent historical data cannot be deleted at all. This enforces "documents are source of truth... always retained" at the schema level, not just as a convention; there is no delete-project (or delete-document, delete-invoice, ...) feature in the app today, and the schema doesn't allow one to accidentally destroy historical data if such a feature is ever added without this in mind.
+
 ---
 
 ## Company
@@ -108,7 +110,7 @@ Written by the worker on the final pipeline stage's success. Retained permanentl
 Invoice
   id
   project_id      FK → Project
-  document_id     FK → Document
+  document_id     FK → Document, unique — at most one Invoice per Document
   supplier_id     FK → Supplier
   company_id      FK → Company
   invoice_date
@@ -116,7 +118,7 @@ Invoice
   created_at
 ```
 
-Created by Next.js when the user confirms an `ExtractionResult`. Never written by the Python worker.
+Created by Next.js when the user confirms an `ExtractionResult`. Never written by the Python worker. The `document_id` unique constraint exists specifically to make a raced double-confirm (two concurrent requests both passing the `status = "pending"` check) fail cleanly on the second insert instead of silently creating two invoices for the same document.
 
 ---
 
@@ -137,6 +139,8 @@ LineItem
 
 `description` stays exactly as extracted regardless of material matching. Matching groups a line item under a canonical material without touching this record — see `MaterialMatch` below.
 
+`quantity`/`unit_price`/`total` are `not null` here even though the extraction prompt allows the vision LLM to return `null` for an illegible number. Any line item with a null numeric field is dropped during parsing (`workers/estimator_workers/extraction.py`) before it's ever written to `ExtractionResult`, rather than being promoted with a fabricated value — an unreadable price isn't "what was purchased," so it's more honest to omit that one line item than to record a number that wasn't actually on the invoice.
+
 ---
 
 ## MaterialCatalog
@@ -145,11 +149,13 @@ LineItem
 MaterialCatalog
   id
   company_id      FK → Company
-  name            canonical material name
+  name            canonical material name, unique per company (case-insensitive)
   created_at
 ```
 
 Company-scoped: what counts as "the same material" is a judgment call each company makes for itself, per the historical-accuracy principle in `product-mvp.md`. Intentionally asymmetric with `Supplier`, which is global — see below.
+
+`(company_id, lower(name))` is unique. `match_materials` (`workers/estimator_workers/tasks.py`) dedupes by name in-loop first, so this constraint is mainly a backstop for two runs racing (a retry after partial failure, or two invoices confirmed close together) — a conflict there is caught and resolved by re-fetching the existing row rather than failing the task.
 
 ---
 

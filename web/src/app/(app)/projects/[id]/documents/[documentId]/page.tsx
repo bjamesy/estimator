@@ -42,6 +42,19 @@ export default async function DocumentReviewPage({
     .limit(1)
     .maybeSingle();
 
+  let latestFailure: { stage: string; error_message: string | null } | null = null;
+  if (document.status === "failed") {
+    const { data: failedEvent } = await supabase
+      .from("document_processing_events")
+      .select("stage, error_message")
+      .eq("document_id", documentId)
+      .eq("status", "failed")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    latestFailure = failedEvent;
+  }
+
   const parsed = extractionResult
     ? extractionPayloadSchema.safeParse(extractionResult.payload)
     : null;
@@ -94,7 +107,15 @@ export default async function DocumentReviewPage({
         </div>
       </div>
 
-      {!extractionResult && (
+      {document.status === "failed" && (
+        <p className="text-destructive">
+          Processing failed{latestFailure ? ` at the "${latestFailure.stage}" stage` : ""}
+          {latestFailure?.error_message ? `: ${latestFailure.error_message}` : "."} Re-upload the
+          document to try again.
+        </p>
+      )}
+
+      {!extractionResult && document.status !== "failed" && (
         <p className="text-muted-foreground">
           Still processing -- no extracted data yet. Refresh in a moment.
         </p>

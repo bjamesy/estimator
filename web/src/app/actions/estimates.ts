@@ -3,11 +3,35 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { getCurrentCompanyId } from "@/lib/company";
+import { tryGetCurrentCompanyId } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
 function computeTotal(quantity: number, unitPrice: number, markupPercent: number): number {
   return quantity * unitPrice * (1 + markupPercent / 100);
+}
+
+// estimate_lines' RLS policy only validates the new row's own company_id
+// column, not the estimate_id it references -- without this check, a
+// caller could insert a row with company_id = their own company but
+// estimate_id pointing at a different company's estimate (this function
+// is a plain exported Server Action, invocable directly, not gated behind
+// the specific UI form that normally supplies a same-company estimateId).
+async function assertEstimateOwnership(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  estimateId: string,
+  companyId: string,
+): Promise<string | null> {
+  const { data: estimate } = await supabase
+    .from("estimates")
+    .select("id")
+    .eq("id", estimateId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+
+  if (!estimate) {
+    return "Estimate not found.";
+  }
+  return null;
 }
 
 export async function createEstimate(projectId: string, _prevState: unknown, formData: FormData) {
@@ -16,7 +40,10 @@ export async function createEstimate(projectId: string, _prevState: unknown, for
     return { error: "Estimate name is required." };
   }
 
-  const companyId = await getCurrentCompanyId();
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -43,8 +70,16 @@ export async function addHistoricalLineToEstimate(
   quantity: number,
   unitPrice: number,
 ): Promise<{ error: string | null }> {
-  const companyId = await getCurrentCompanyId();
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
   const supabase = await createClient();
+
+  const ownershipError = await assertEstimateOwnership(supabase, estimateId, companyId);
+  if (ownershipError) {
+    return { error: ownershipError };
+  }
 
   const { error } = await supabase.from("estimate_lines").insert({
     estimate_id: estimateId,
@@ -71,8 +106,16 @@ export async function addHistoricalLineToEstimate(
 // signature. Failure just means no new row appears; acceptable for a
 // fixed-default insert this unlikely to fail.
 export async function addBlankEstimateLine(estimateId: string, projectId: string): Promise<void> {
-  const companyId = await getCurrentCompanyId();
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return;
+  }
   const supabase = await createClient();
+
+  const ownershipError = await assertEstimateOwnership(supabase, estimateId, companyId);
+  if (ownershipError) {
+    return;
+  }
 
   await supabase.from("estimate_lines").insert({
     estimate_id: estimateId,

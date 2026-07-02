@@ -13,9 +13,17 @@ SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png"}
 class LineItem(BaseModel):
     description: str
     sku: str | None
-    quantity: float
-    unit_price: float
-    total: float
+    # Nullable to match what EXTRACTION_PROMPT actually tells the model
+    # ("if a field is illegible, use null"). A non-nullable float here
+    # caused a real bug: one illegible number on an otherwise-legible
+    # receipt would fail pydantic validation and permanently terminal-fail
+    # the whole document after 3 wasted retries (retrying re-parses the
+    # same LLM output, so it fails identically every time). See
+    # parse_extraction_json, which drops incomplete line items rather than
+    # letting them crash the whole payload.
+    quantity: float | None
+    unit_price: float | None
+    total: float | None
 
 
 class ExtractionPayload(BaseModel):
@@ -93,4 +101,18 @@ def parse_extraction_json(raw_text: str) -> ExtractionPayload:
     except json.JSONDecodeError:
         raise ValueError(f"Vision LLM did not return valid JSON: {raw_text[:500]}")
 
-    return ExtractionPayload.model_validate(data)
+    payload = ExtractionPayload.model_validate(data)
+
+    # A line item with any illegible numeric field isn't usable historical
+    # data -- it's more honest to drop it than to fabricate a value (e.g.
+    # zero) that would misrepresent what was actually purchased. This is
+    # the server-side equivalent of the prompt's own fallback ("or omit
+    # the line item entirely if it's unreadable"), applied uniformly
+    # rather than left to the model's discretion.
+    payload.line_items = [
+        item
+        for item in payload.line_items
+        if item.quantity is not None and item.unit_price is not None and item.total is not None
+    ]
+
+    return payload
