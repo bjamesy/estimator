@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -13,9 +12,29 @@ import {
 import { documentFileName } from "@/lib/documents";
 import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
+import { cn } from "@/lib/utils";
 
 import { ConfirmButton } from "./confirm-button";
 import { MaterialMatches } from "./material-matches";
+
+// Subtle dot + label status, matching the documents list (replaces the loud
+// filled badge).
+const STATUS_META: Record<string, { dot: string; label: string }> = {
+  pending: { dot: "bg-amber-500", label: "Pending review" },
+  confirmed: { dot: "bg-emerald-500", label: "Confirmed" },
+  failed: { dot: "bg-destructive", label: "Failed" },
+  rejected: { dot: "bg-muted-foreground", label: "Rejected" },
+};
+
+function StatusIndicator({ status }: { status: string }) {
+  const meta = STATUS_META[status] ?? { dot: "bg-muted-foreground", label: status };
+  return (
+    <span className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+      <span className={cn("size-2 rounded-full", meta.dot)} />
+      {meta.label}
+    </span>
+  );
+}
 
 export default async function DocumentReviewPage({
   params,
@@ -96,16 +115,31 @@ export default async function DocumentReviewPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+      <div className="flex flex-col gap-2">
+        <Link
+          href={`/projects/${projectId}`}
+          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
           &larr; Back to project
         </Link>
-        <div className="mt-2 flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">{documentFileName(document.storage_path)}</h1>
-          <Badge variant={document.status === "confirmed" ? "default" : "secondary"}>
-            {document.status}
-          </Badge>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {/* Lead with the supplier (meaningful) once extracted; the raw
+              filename is a device name like a UUID, so it moves to a muted
+              subline. */}
+          <h1 className="text-2xl font-semibold">
+            {parsed?.success ? parsed.data.supplier_name : documentFileName(document.storage_path)}
+          </h1>
+          <StatusIndicator status={document.status} />
         </div>
+        {parsed?.success && (
+          <p className="truncate text-sm text-muted-foreground">
+            {parsed.data.invoice_date ?? "no date"} ·{" "}
+            {parsed.data.total != null ? `$${parsed.data.total.toFixed(2)}` : "no total"} ·{" "}
+            <span className="text-muted-foreground/70">
+              {documentFileName(document.storage_path)}
+            </span>
+          </p>
+        )}
       </div>
 
       {document.status === "failed" && (
@@ -136,12 +170,10 @@ export default async function DocumentReviewPage({
 
       {parsed?.success && (
         <>
-          <p className="text-sm text-muted-foreground">
-            {parsed.data.supplier_name} · {parsed.data.invoice_date ?? "no date"} ·{" "}
-            {parsed.data.total != null ? `$${parsed.data.total.toFixed(2)}` : "no total"}
-          </p>
-
-          <Table>
+          {/* min-width so the columns keep readable widths and the table's
+              overflow-x-auto scrolls (a sliding bar) on mobile instead of
+              squishing everything into the Description column. */}
+          <Table className="min-w-[640px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Description</TableHead>

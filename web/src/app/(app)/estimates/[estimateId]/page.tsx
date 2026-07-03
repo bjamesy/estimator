@@ -1,8 +1,9 @@
+import { FolderIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { addBlankEstimateLine } from "@/app/actions/estimates";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -12,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createClient } from "@/lib/supabase/server";
+import { cn } from "@/lib/utils";
 
 import { EstimateLineRow } from "./estimate-line-row";
 import { HistoricalSearch } from "./historical-search";
@@ -54,21 +56,17 @@ export default async function EstimatePage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <Link href="/estimates" className="transition-colors hover:text-foreground">
-            &larr; Back to estimates
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">{estimate.name}</h1>
+        {estimate.project_id && projectName && (
+          <Link
+            href={`/projects/${estimate.project_id}`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <FolderIcon className="size-4" />
+            {projectName}
           </Link>
-          {estimate.project_id && (
-            <>
-              <span>&middot;</span>
-              <Link href={`/projects/${estimate.project_id}`} className="transition-colors hover:text-foreground">
-                Project: {projectName}
-              </Link>
-            </>
-          )}
-        </div>
-        <h1 className="mt-2 text-2xl font-semibold">{estimate.name}</h1>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">

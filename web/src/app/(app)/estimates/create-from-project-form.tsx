@@ -11,9 +11,9 @@ export function CreateFromProjectForm({ projectId }: { projectId: string }) {
   const [state, formAction, pending] = useActionState(action, null);
 
   return (
-    <form action={formAction} className="flex flex-col gap-2 sm:flex-row">
+    <form action={formAction} className="flex flex-col gap-3 sm:flex-row sm:gap-2">
       <Input name="name" placeholder="Estimate name" required />
-      <Button type="submit" variant="outline" disabled={pending}>
+      <Button type="submit" disabled={pending}>
         {pending ? "Building..." : "Create estimate from this project's materials"}
       </Button>
       {state?.error && <p className="text-sm text-destructive">{state.error}</p>}

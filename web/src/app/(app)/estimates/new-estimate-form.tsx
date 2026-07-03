@@ -15,10 +15,10 @@ export function NewEstimateForm({ projects }: { projects: Project[] }) {
   const [state, formAction, pending] = useActionState(createEstimate, null);
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-3">
       {/* Stacks on mobile so the name input isn't crushed to nothing
           between the (wide) project select and the button; row from sm up. */}
-      <form action={formAction} className="flex flex-col gap-2 sm:flex-row">
+      <form action={formAction} className="flex flex-col gap-3 sm:flex-row sm:gap-2">
         <Input name="name" placeholder="New estimate name" required />
         <select
           name="project_id"
