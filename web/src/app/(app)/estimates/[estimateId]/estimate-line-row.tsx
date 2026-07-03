@@ -49,7 +49,10 @@ export function EstimateLineRow({
           ref={formRef}
           action={formAction}
           onBlur={handleBlur}
-          className="grid grid-cols-6 items-center gap-2 p-2"
+          // min-w matches the header grid in page.tsx so columns stay
+          // aligned; the table's overflow-x-auto scrolls on mobile rather
+          // than cramming the inputs.
+          className="grid min-w-[640px] grid-cols-6 items-center gap-2 p-2"
         >
           <Input name="description" defaultValue={line.description} className="col-span-2" />
           <Input name="quantity" type="number" step="any" defaultValue={line.quantity} />

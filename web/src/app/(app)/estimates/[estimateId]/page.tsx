@@ -93,7 +93,12 @@ export default async function EstimatePage({
                     widths never match. */}
                 <TableRow>
                   <TableHead colSpan={6} className="p-0">
-                    <div className="grid grid-cols-6 items-center gap-2 p-2 text-muted-foreground">
+                    {/* min-w keeps the columns usable on mobile: the table's
+                        overflow-x-auto container scrolls horizontally instead
+                        of shrinking inputs to nothing. Must match the row
+                        grid's min-w in estimate-line-row.tsx so header and
+                        body stay aligned. */}
+                    <div className="grid min-w-[640px] grid-cols-6 items-center gap-2 p-2 text-muted-foreground">
                       <span className="col-span-2">Description</span>
                       <span>Qty</span>
                       <span>Unit price</span>

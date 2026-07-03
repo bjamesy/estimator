@@ -16,12 +16,14 @@ export function NewEstimateForm({ projects }: { projects: Project[] }) {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <form action={formAction} className="flex gap-2">
+      {/* Stacks on mobile so the name input isn't crushed to nothing
+          between the (wide) project select and the button; row from sm up. */}
+      <form action={formAction} className="flex flex-col gap-2 sm:flex-row">
         <Input name="name" placeholder="New estimate name" required />
         <select
           name="project_id"
           defaultValue=""
-          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 sm:w-auto dark:bg-input/30"
         >
           <option value="">No project — blank estimate</option>
           {projects.map((p) => (
