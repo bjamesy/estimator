@@ -41,7 +41,7 @@ export function LoginForm({ oauthError }: { oauthError?: string | null }) {
         </form>
         <p className="text-sm text-muted-foreground">
           Need an account?{" "}
-          <Link href="/signup" className="underline">
+          <Link href="/signup" className="text-primary hover:underline">
             Sign up
           </Link>
         </p>

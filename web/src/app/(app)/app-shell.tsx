@@ -99,8 +99,11 @@ export function AppShell({
 
   return (
     <div className="flex min-h-svh">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r bg-sidebar md:block">{sidebar}</aside>
+      {/* Desktop sidebar -- pinned full-height so it stays put while the
+          content scrolls; its own list area scrolls internally. */}
+      <aside className="hidden h-svh w-64 shrink-0 self-start border-r bg-sidebar md:sticky md:top-0 md:block">
+        {sidebar}
+      </aside>
 
       {/* Mobile drawer -- always mounted so it slides; pointer-events off
           when closed so it doesn't block the page. */}
@@ -141,7 +144,7 @@ export function AppShell({
         {/* Top navbar: account identity + controls on the right at every
             size; the hamburger + wordmark on the left only on mobile, where
             the sidebar is hidden behind the drawer. */}
-        <header className="flex items-center border-b px-4 py-3">
+        <header className="sticky top-0 z-30 flex items-center border-b bg-background px-4 py-3">
           <div className="flex items-center gap-3 md:hidden">
             <Button
               type="button"
@@ -174,7 +177,7 @@ export function AppShell({
         <main className="mx-auto w-full max-w-3xl flex-1 p-4 sm:p-6">{children}</main>
 
         <footer className="border-t px-4 py-4 sm:px-6">
-          <p className="text-right text-sm text-muted-foreground">
+          <p className="text-center text-sm text-muted-foreground">
             Questions or feedback?{" "}
             <a
               href="mailto:jameswballanger@gmail.com"

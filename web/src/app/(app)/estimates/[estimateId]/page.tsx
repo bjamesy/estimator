@@ -56,13 +56,13 @@ export default async function EstimatePage({
     <div className="flex flex-col gap-6">
       <div>
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <Link href="/estimates" className="underline">
+          <Link href="/estimates" className="transition-colors hover:text-foreground">
             &larr; Back to estimates
           </Link>
           {estimate.project_id && (
             <>
               <span>&middot;</span>
-              <Link href={`/projects/${estimate.project_id}`} className="underline">
+              <Link href={`/projects/${estimate.project_id}`} className="transition-colors hover:text-foreground">
                 Project: {projectName}
               </Link>
             </>

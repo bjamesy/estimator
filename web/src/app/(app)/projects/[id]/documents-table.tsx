@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { retryDocumentProcessing } from "@/app/actions/documents";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { documentFileName } from "@/lib/documents";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -26,14 +24,26 @@ type LatestEvent = {
   started_at: string;
 } | null;
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = {
-  pending: "secondary",
-  confirmed: "default",
-  failed: "destructive",
-  // A rejected (non-purchase) document is a normal outcome, not an error --
-  // keep it muted rather than destructive-red.
-  rejected: "secondary",
-};
+// Subtle dot + label per status instead of a loud filled badge. Conventional
+// status colors (green ok / red error / amber in-progress / grey neutral);
+// "ready to review" borrows the brand to nudge toward the action.
+function statusMeta(
+  status: string,
+  isReady: boolean,
+  isStalled: boolean,
+): { dotClass: string; label: string } {
+  if (status === "pending") {
+    if (isStalled) return { dotClass: "bg-amber-500", label: "Stalled" };
+    if (isReady) return { dotClass: "bg-primary", label: "Ready to review" };
+    return { dotClass: "bg-amber-500 animate-pulse", label: "Processing" };
+  }
+  if (status === "confirmed") return { dotClass: "bg-emerald-500", label: "Confirmed" };
+  if (status === "failed") return { dotClass: "bg-destructive", label: "Failed" };
+  if (status === "rejected") {
+    return { dotClass: "bg-muted-foreground", label: "Not a purchase document" };
+  }
+  return { dotClass: "bg-muted-foreground", label: status };
+}
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -159,100 +169,83 @@ export function DocumentsTable({
   ]);
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Status</TableHead>
-          <TableHead>Uploaded</TableHead>
-          <TableHead />
-          <TableHead>File</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {documents.map((doc) => {
-          const latest = latestEvents[doc.id];
-          const isReady = readyForReview.has(doc.id);
-          // No pipeline activity past the threshold means the task was
-          // lost (broker wiped mid-chain, worker down at publish time) --
-          // the chain never resumes on its own, so waiting longer won't
-          // help. Falls back to created_at for documents whose task was
-          // lost before any event was ever written.
-          const lastActivity = new Date(latest?.started_at ?? doc.created_at).getTime();
-          const isStalled =
-            doc.status === "pending" &&
-            !isReady &&
-            now > 0 &&
-            now - lastActivity > STALL_THRESHOLD_MS;
-          return (
-            <TableRow key={doc.id}>
-              <TableCell>
-                <div className="flex flex-col gap-1">
-                  <Badge variant={STATUS_VARIANT[doc.status] ?? "secondary"}>{doc.status}</Badge>
-                  {doc.status === "pending" && !isReady && !isStalled && latest && (
-                    <span className="text-xs text-muted-foreground">
-                      {latest.stage}: {latest.status}
-                    </span>
-                  )}
-                  {isStalled && (
-                    <span className="text-xs text-destructive">
-                      processing stalled — the task appears to have been lost
-                    </span>
-                  )}
-                  {retryErrors[doc.id] && (
-                    <span className="max-w-xs truncate text-xs text-destructive">
-                      {retryErrors[doc.id]}
-                    </span>
-                  )}
-                  {doc.status === "failed" && latest?.error_message && (
-                    <span className="max-w-xs truncate text-xs text-destructive">
-                      {latest.stage} failed: {latest.error_message}
-                    </span>
-                  )}
-                  {doc.status === "rejected" && (
-                    <span className="max-w-xs truncate text-xs text-muted-foreground">
-                      {doc.rejection_reason ?? "Not a purchase document"}
-                    </span>
-                  )}
-                </div>
-              </TableCell>
-              <TableCell>
-                {new Date(doc.created_at).toLocaleString("en-US", { timeZone: "UTC" })}
-              </TableCell>
-              <TableCell>
-                {doc.status === "pending" && isReady && (
-                  <Link
-                    href={`/projects/${projectId}/documents/${doc.id}`}
-                    className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-                  >
-                    Review & Confirm
-                  </Link>
-                )}
-                {isStalled && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={retryingId === doc.id}
-                    onClick={() => handleRetry(doc.id)}
-                  >
-                    {retryingId === doc.id ? "Retrying..." : "Retry processing"}
-                  </Button>
-                )}
-                {doc.status === "confirmed" && (
-                  <Link
-                    href={`/projects/${projectId}/documents/${doc.id}`}
-                    className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}
-                  >
-                    View
-                  </Link>
-                )}
-              </TableCell>
-              <TableCell className="max-w-40 truncate text-xs text-muted-foreground">
-                {documentFileName(doc.storage_path)}
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+    <div className="flex flex-col gap-2">
+      {documents.map((doc) => {
+        const latest = latestEvents[doc.id];
+        const isReady = readyForReview.has(doc.id);
+        // No pipeline activity past the threshold means the task was lost
+        // (broker wiped mid-chain, worker down at publish time) -- the chain
+        // never resumes on its own, so waiting longer won't help. Falls back
+        // to created_at for documents whose task was lost before any event
+        // was ever written.
+        const lastActivity = new Date(latest?.started_at ?? doc.created_at).getTime();
+        const isStalled =
+          doc.status === "pending" && !isReady && now > 0 && now - lastActivity > STALL_THRESHOLD_MS;
+        const { dotClass, label } = statusMeta(doc.status, isReady, isStalled);
+
+        return (
+          <div
+            key={doc.id}
+            className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <span className={cn("size-2 shrink-0 rounded-full", dotClass)} />
+                <span className="text-sm font-medium">{label}</span>
+              </div>
+              <span className="truncate text-xs text-muted-foreground">
+                {documentFileName(doc.storage_path)} ·{" "}
+                {new Date(doc.created_at).toLocaleDateString("en-US", { timeZone: "UTC" })}
+              </span>
+              {isStalled && (
+                <span className="text-xs text-destructive">The task appears to have been lost.</span>
+              )}
+              {retryErrors[doc.id] && (
+                <span className="truncate text-xs text-destructive">{retryErrors[doc.id]}</span>
+              )}
+              {doc.status === "failed" && latest?.error_message && (
+                <span className="truncate text-xs text-destructive">
+                  {latest.stage} failed: {latest.error_message}
+                </span>
+              )}
+              {doc.status === "rejected" && doc.rejection_reason && (
+                <span className="truncate text-xs text-muted-foreground">
+                  {doc.rejection_reason}
+                </span>
+              )}
+            </div>
+
+            <div className="shrink-0">
+              {doc.status === "pending" && isReady && (
+                <Link
+                  href={`/projects/${projectId}/documents/${doc.id}`}
+                  className={cn(buttonVariants({ size: "sm" }))}
+                >
+                  Review
+                </Link>
+              )}
+              {isStalled && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={retryingId === doc.id}
+                  onClick={() => handleRetry(doc.id)}
+                >
+                  {retryingId === doc.id ? "Retrying..." : "Retry"}
+                </Button>
+              )}
+              {doc.status === "confirmed" && (
+                <Link
+                  href={`/projects/${projectId}/documents/${doc.id}`}
+                  className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}
+                >
+                  View
+                </Link>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }

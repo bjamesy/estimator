@@ -61,7 +61,7 @@ export default function SearchPage() {
                 <TableCell>
                   <Link
                     href={`/projects/${r.project_id}`}
-                    className="underline hover:text-foreground"
+                    className="text-primary hover:underline"
                   >
                     {r.project_name}
                   </Link>

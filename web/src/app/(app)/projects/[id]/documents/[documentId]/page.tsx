@@ -97,7 +97,7 @@ export default async function DocumentReviewPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground underline">
+        <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
           &larr; Back to project
         </Link>
         <div className="mt-2 flex items-center gap-3">
