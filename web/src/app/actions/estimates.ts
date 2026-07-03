@@ -44,16 +44,22 @@ async function assertEstimateOwnership(
   return null;
 }
 
-// project_id is optional -- Estimates draw on the company-wide historical
-// knowledge base, not a specific project's, and aren't required to belong
-// to one. See docs/architecture.md -> Estimate-building data flow. Only
-// called from the top-level /estimates page's picker (empty selection ->
-// no project); a project's own page instead offers
-// createEstimateFromProject, which is strictly more useful there.
+// The /estimates picker's create action. Selecting a project now seeds the
+// new estimate from that project's purchase history -- the same path the
+// project page uses (seedEstimateFromProject) -- rather than merely tagging
+// it, so "reference a project" always means "built from this project's
+// actuals". "No project" creates a blank, company-wide estimate built up
+// via historical search. See docs/architecture.md -> Estimate-building data
+// flow.
 export async function createEstimate(_prevState: unknown, formData: FormData) {
   const name = (formData.get("name") as string)?.trim();
   if (!name) {
     return { error: "Estimate name is required." };
+  }
+
+  const rawProjectId = formData.get("project_id") as string | null;
+  if (rawProjectId) {
+    return seedEstimateFromProject(rawProjectId, name);
   }
 
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
@@ -62,27 +68,37 @@ export async function createEstimate(_prevState: unknown, formData: FormData) {
   }
   const supabase = await createClient();
 
-  const rawProjectId = formData.get("project_id") as string | null;
-  const resolvedProjectId = rawProjectId ? rawProjectId : null;
-
   const { data, error } = await supabase
     .from("estimates")
-    .insert({ project_id: resolvedProjectId, company_id: companyId, name })
+    .insert({ project_id: null, company_id: companyId, name })
     .select("id")
     .single();
 
   if (error?.code === POSTGRES_UNIQUE_VIOLATION) {
-    return { error: duplicateNameError(name, resolvedProjectId !== null) };
+    return { error: duplicateNameError(name, false) };
   }
   if (error) {
     return { error: error.message };
   }
 
   revalidatePath("/estimates");
-  if (resolvedProjectId) {
-    revalidatePath(`/projects/${resolvedProjectId}`);
-  }
   redirect(`/estimates/${data.id}`);
+}
+
+// Thin wrapper bound on the project page's "from this project" button.
+// Both this and the /estimates picker (createEstimate, when a project is
+// selected) funnel into seedEstimateFromProject so there is exactly one
+// seeding path.
+export async function createEstimateFromProject(
+  projectId: string,
+  _prevState: unknown,
+  formData: FormData,
+) {
+  const name = (formData.get("name") as string)?.trim();
+  if (!name) {
+    return { error: "Estimate name is required." };
+  }
+  return seedEstimateFromProject(projectId, name);
 }
 
 // Bulk-seeds a new estimate from a project's own confirmed purchase
@@ -99,17 +115,12 @@ export async function createEstimate(_prevState: unknown, formData: FormData) {
 // line (there's no canonical material to look one up by). The user
 // reviews the result on the normal estimate page and deletes/edits
 // whichever lines they don't want -- that review *is* the approval,
-// there's no separate staging step or approved status.
-export async function createEstimateFromProject(
+// there's no separate staging step or approved status. Redirects to the
+// new estimate on success; returns { error } on failure.
+async function seedEstimateFromProject(
   projectId: string,
-  _prevState: unknown,
-  formData: FormData,
-) {
-  const name = (formData.get("name") as string)?.trim();
-  if (!name) {
-    return { error: "Estimate name is required." };
-  }
-
+  name: string,
+): Promise<{ error: string }> {
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
   if (companyError !== null) {
     return { error: companyError };

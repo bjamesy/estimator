@@ -8,8 +8,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-svh">
       <header className="flex items-center justify-between border-b px-6 py-4">
         <div className="flex items-center gap-6">
-          <Link href="/projects" className="font-semibold">
+          <Link href="/" className="font-semibold">
             Estimator
+          </Link>
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+            Home
           </Link>
           <Link href="/projects" className="text-sm text-muted-foreground hover:text-foreground">
             Projects
