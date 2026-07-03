@@ -1,7 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/signup"];
+// /auth is public because the OAuth callback runs BEFORE a session exists
+// (the user arrives with a `code` and the PKCE verifier cookie, not yet an
+// auth session) -- gating it would bounce the callback to /login before it
+// can exchange the code. See src/app/auth/callback/route.ts.
+const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

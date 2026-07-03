@@ -1,10 +1,22 @@
+import { redirect } from "next/navigation";
+
 import { logout } from "@/app/actions/auth";
+import { tryGetCurrentCompanyId } from "@/lib/company";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
 import { MainNav } from "./main-nav";
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // Middleware guarantees an authenticated user here, so a failure means the
+  // user has no company yet -- a first-time Google sign-in that skipped the
+  // signup company-creation step. Send them to onboarding to name one.
+  // (/onboarding is in the (auth) group, not under this layout, so no loop.)
+  const { error } = await tryGetCurrentCompanyId();
+  if (error) {
+    redirect("/onboarding");
+  }
+
   return (
     <div className="min-h-svh">
       {/* Stacks into two rows on mobile (nav, then account controls) so the

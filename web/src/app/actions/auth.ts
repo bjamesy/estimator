@@ -58,6 +58,58 @@ export async function signup(_prevState: unknown, formData: FormData) {
   redirect("/projects");
 }
 
+// First-company setup for a user who authenticated without going through the
+// email/password signup flow -- i.e. a first-time Google sign-in, which never
+// collected a company name or created the company_members row. Same
+// admin-client company+membership creation as signup, minus account creation.
+export async function createCompanyForCurrentUser(_prevState: unknown, formData: FormData) {
+  const companyName = (formData.get("companyName") as string)?.trim();
+  if (!companyName) {
+    return { error: "Company name is required." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "Not signed in." };
+  }
+
+  // Don't create a second company for a user who already has one (double
+  // submit, or they navigated back to /onboarding).
+  const { data: existing } = await supabase
+    .from("company_members")
+    .select("company_id")
+    .eq("user_id", user.id)
+    .limit(1)
+    .maybeSingle();
+  if (existing) {
+    redirect("/");
+  }
+
+  const admin = createAdminClient();
+  const { data: company, error: companyError } = await admin
+    .from("companies")
+    .insert({ name: companyName })
+    .select("id")
+    .single();
+  if (companyError) {
+    return { error: `Company setup failed: ${companyError.message}` };
+  }
+
+  const { error: memberError } = await admin.from("company_members").insert({
+    company_id: company.id,
+    user_id: user.id,
+    role: "owner",
+  });
+  if (memberError) {
+    return { error: `Company setup failed: ${memberError.message}` };
+  }
+
+  redirect("/");
+}
+
 export async function login(_prevState: unknown, formData: FormData) {
   const email = formData.get("email") as string;
   const password = formData.get("password") as string;

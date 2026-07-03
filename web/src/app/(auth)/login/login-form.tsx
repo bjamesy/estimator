@@ -9,7 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export function LoginForm() {
+import { GoogleButton } from "../google-button";
+import { OrDivider } from "../or-divider";
+
+export function LoginForm({ oauthError }: { oauthError?: string | null }) {
   const [state, formAction, pending] = useActionState(login, null);
 
   return (
@@ -18,7 +21,10 @@ export function LoginForm() {
         <CardTitle>Log in</CardTitle>
         <CardDescription>Welcome back.</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
+        <GoogleButton />
+        {oauthError && <p className="text-sm text-destructive">{oauthError}</p>}
+        <OrDivider />
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="email">Email</Label>
@@ -33,7 +39,7 @@ export function LoginForm() {
             {pending ? "Logging in..." : "Log in"}
           </Button>
         </form>
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Need an account?{" "}
           <Link href="/signup" className="underline">
             Sign up

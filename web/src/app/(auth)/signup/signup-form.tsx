@@ -9,6 +9,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { GoogleButton } from "../google-button";
+import { OrDivider } from "../or-divider";
+
 export function SignupForm() {
   const [state, formAction, pending] = useActionState(signup, null);
 
@@ -29,7 +32,9 @@ export function SignupForm() {
         <CardTitle>Create your company</CardTitle>
         <CardDescription>Set up your team to start building history.</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
+        <GoogleButton label="Sign up with Google" />
+        <OrDivider />
         <form action={formAction} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             <Label htmlFor="companyName">Company name</Label>
@@ -48,7 +53,7 @@ export function SignupForm() {
             {pending ? "Creating account..." : "Create account"}
           </Button>
         </form>
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Already have an account?{" "}
           <Link href="/login" className="underline">
             Log in
