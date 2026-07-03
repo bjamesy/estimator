@@ -16,7 +16,7 @@ export function LoginForm() {
     <Card>
       <CardHeader>
         <CardTitle>Log in</CardTitle>
-        <CardDescription>Welcome back to Estimator.</CardDescription>
+        <CardDescription>Welcome back.</CardDescription>
       </CardHeader>
       <CardContent>
         <form action={formAction} className="flex flex-col gap-4">

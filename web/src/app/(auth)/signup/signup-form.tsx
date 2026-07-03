@@ -27,7 +27,7 @@ export function SignupForm() {
     <Card>
       <CardHeader>
         <CardTitle>Create your company</CardTitle>
-        <CardDescription>Set up Estimator for your team.</CardDescription>
+        <CardDescription>Set up your team to start building history.</CardDescription>
       </CardHeader>
       <CardContent>
         <form action={formAction} className="flex flex-col gap-4">
