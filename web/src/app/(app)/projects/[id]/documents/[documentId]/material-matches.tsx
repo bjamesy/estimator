@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { flagMaterialMatch } from "@/app/actions/materials";
+import { flagMaterialMatch, unflagMaterialMatch } from "@/app/actions/materials";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -32,8 +32,11 @@ export function MaterialMatches({
   initialMatches: MatchRow[];
 }) {
   const [matches, setMatches] = useState(initialMatches);
-  const [flagging, setFlagging] = useState<string | null>(null);
-  const [flagError, setFlagError] = useState<string | null>(null);
+  // matchId with an in-flight status change (flag or undo), for disabling
+  // that row's button; shared because the two actions are mutually
+  // exclusive per row.
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [pollAttempts, setPollAttempts] = useState(0);
 
   useEffect(() => {
@@ -78,15 +81,27 @@ export function MaterialMatches({
   }, [matches.length, lineItems.length, pollAttempts >= MAX_POLL_ATTEMPTS]);
 
   async function handleFlag(matchId: string) {
-    setFlagging(matchId);
-    setFlagError(null);
+    setPendingId(matchId);
+    setActionError(null);
     const { error } = await flagMaterialMatch(matchId, projectId, documentId);
     if (error) {
-      setFlagError(error);
+      setActionError(error);
     } else {
       setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, status: "flagged" } : m)));
     }
-    setFlagging(null);
+    setPendingId(null);
+  }
+
+  async function handleUnflag(matchId: string) {
+    setPendingId(matchId);
+    setActionError(null);
+    const { error } = await unflagMaterialMatch(matchId, projectId, documentId);
+    if (error) {
+      setActionError(error);
+    } else {
+      setMatches((prev) => prev.map((m) => (m.id === matchId ? { ...m, status: "proposed" } : m)));
+    }
+    setPendingId(null);
   }
 
   const stillMatching = matches.length < lineItems.length;
@@ -105,7 +120,7 @@ export function MaterialMatches({
           may never complete.
         </p>
       )}
-      {flagError && <p className="text-sm text-destructive">{flagError}</p>}
+      {actionError && <p className="text-sm text-destructive">{actionError}</p>}
       <Table>
         <TableHeader>
           <TableRow>
@@ -137,10 +152,20 @@ export function MaterialMatches({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={flagging === match.id}
+                      disabled={pendingId === match.id}
                       onClick={() => handleFlag(match.id)}
                     >
-                      {flagging === match.id ? "Flagging..." : "Flag as wrong"}
+                      {pendingId === match.id ? "Flagging..." : "Flag as wrong"}
+                    </Button>
+                  )}
+                  {match && match.status === "flagged" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={pendingId === match.id}
+                      onClick={() => handleUnflag(match.id)}
+                    >
+                      {pendingId === match.id ? "Restoring..." : "Undo flag"}
                     </Button>
                   )}
                 </TableCell>

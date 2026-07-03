@@ -175,7 +175,7 @@ MaterialMatch
   created_at
 ```
 
-Join table between `LineItem` and `MaterialCatalog`. Matching runs after user confirmation, not during extraction — the system auto-proposes a match, and the user can flag it wrong. Flagging is independent metadata on the relationship; it never changes `Document.status`, the `LineItem` record, or the original document.
+Join table between `LineItem` and `MaterialCatalog`. Matching runs after user confirmation, not during extraction — the system auto-proposes a match, and the user can flag it wrong. Flagging is reversible: an "Undo flag" action (`unflagMaterialMatch`, `web/src/app/actions/materials.ts`) sets `status` back to `proposed`, restoring the match to the accepted grouping that material aggregation and estimate seeding count. Flag/unflag is independent metadata on the relationship; it never changes `Document.status`, the `LineItem` record, or the original document.
 
 ---
 
@@ -239,7 +239,10 @@ EstimateLine
   unit_price
   markup_percent        default 0
   total                 quantity * unit_price * (1 + markup_percent / 100), recalculated on edit
+  deleted_at            timestamptz, nullable — non-null tombstones the line (removed but restorable)
   created_at
 ```
 
 A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.
+
+**Removing a line is a soft delete** (`0015_estimate_line_soft_delete.sql`). `deleteEstimateLine` sets `deleted_at` instead of dropping the row; `restoreEstimateLine` clears it. A tombstoned line is retained and shown struck-through under "Removed lines" with a Restore button, but is excluded from the estimate total and any export — both count only rows where `deleted_at is null`. Newly inserted lines are always active (`deleted_at` null).

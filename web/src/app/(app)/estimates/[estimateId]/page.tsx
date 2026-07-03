@@ -15,6 +15,7 @@ import { createClient } from "@/lib/supabase/server";
 
 import { EstimateLineRow } from "./estimate-line-row";
 import { HistoricalSearch } from "./historical-search";
+import { RemovedLines } from "./removed-lines";
 
 export default async function EstimatePage({
   params,
@@ -36,13 +37,18 @@ export default async function EstimatePage({
 
   const projectName = (estimate.projects as unknown as { name: string } | null)?.name;
 
-  const { data: lines } = await supabase
+  const { data: allLines } = await supabase
     .from("estimate_lines")
-    .select("id, description, quantity, unit_price, markup_percent, total")
+    .select("id, description, quantity, unit_price, markup_percent, total, deleted_at")
     .eq("estimate_id", estimateId)
     .order("created_at", { ascending: true });
 
-  const grandTotal = (lines ?? []).reduce((sum, l) => sum + l.total, 0);
+  // Tombstoned lines (deleted_at set) are retained and restorable but
+  // excluded from the total and any export -- only active lines count.
+  const lines = (allLines ?? []).filter((l) => l.deleted_at === null);
+  const removedLines = (allLines ?? []).filter((l) => l.deleted_at !== null);
+
+  const grandTotal = lines.reduce((sum, l) => sum + l.total, 0);
 
   const addBlankLine = addBlankEstimateLine.bind(null, estimateId);
 
@@ -75,16 +81,26 @@ export default async function EstimatePage({
           </form>
         </div>
 
-        {lines && lines.length > 0 ? (
+        {lines.length > 0 ? (
           <>
             <Table>
               <TableHeader>
+                {/* Header is one colSpan-6 cell wrapping the SAME
+                    grid-cols-6 layout as each body row (EstimateLineRow),
+                    so the labels line up with the input columns. Real <th>
+                    cells wouldn't: every body row is a single colSpan-6 cell
+                    with its own internal grid, so the table's auto column
+                    widths never match. */}
                 <TableRow>
-                  <TableHead colSpan={2}>Description</TableHead>
-                  <TableHead>Qty</TableHead>
-                  <TableHead>Unit price</TableHead>
-                  <TableHead>Markup %</TableHead>
-                  <TableHead>Total</TableHead>
+                  <TableHead colSpan={6} className="p-0">
+                    <div className="grid grid-cols-6 items-center gap-2 p-2 text-muted-foreground">
+                      <span className="col-span-2">Description</span>
+                      <span>Qty</span>
+                      <span>Unit price</span>
+                      <span>Markup %</span>
+                      <span>Total</span>
+                    </div>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -110,6 +126,10 @@ export default async function EstimatePage({
           </>
         ) : (
           <p className="text-muted-foreground">No lines yet.</p>
+        )}
+
+        {removedLines.length > 0 && (
+          <RemovedLines estimateId={estimateId} lines={removedLines} />
         )}
       </div>
 

@@ -404,12 +404,40 @@ export async function updateEstimateLine(
   return { error: null };
 }
 
+// Soft delete: tombstone the line (set deleted_at) rather than removing the
+// row. The estimate total and any export count only active (deleted_at is
+// null) lines, and restoreEstimateLine below can bring it back. RLS's
+// company-access policy scopes the update; no explicit ownership check, same
+// as before.
 export async function deleteEstimateLine(
   lineId: string,
   estimateId: string,
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
-  const { error } = await supabase.from("estimate_lines").delete().eq("id", lineId);
+  const { error } = await supabase
+    .from("estimate_lines")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", lineId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath(`/estimates/${estimateId}`);
+  return { error: null };
+}
+
+// Undo a soft delete -- clears the tombstone so the line rejoins the active
+// set and its value counts toward the total again.
+export async function restoreEstimateLine(
+  lineId: string,
+  estimateId: string,
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("estimate_lines")
+    .update({ deleted_at: null })
+    .eq("id", lineId);
 
   if (error) {
     return { error: error.message };
