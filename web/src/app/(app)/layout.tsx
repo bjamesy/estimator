@@ -1,40 +1,37 @@
 import { redirect } from "next/navigation";
 
-import { logout } from "@/app/actions/auth";
 import { tryGetCurrentCompanyId } from "@/lib/company";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/server";
 
-import { MainNav } from "./main-nav";
+import { AppShell } from "./app-shell";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Middleware guarantees an authenticated user here, so a failure means the
   // user has no company yet -- a first-time Google sign-in that skipped the
   // signup company-creation step. Send them to onboarding to name one.
   // (/onboarding is in the (auth) group, not under this layout, so no loop.)
-  const { error } = await tryGetCurrentCompanyId();
+  const { companyId, error } = await tryGetCurrentCompanyId();
   if (error) {
     redirect("/onboarding");
   }
 
+  // Data for the shell: account identity (company name preferred, email as
+  // fallback) plus the project/estimate lists the sidebar renders as rows.
+  // All readable under RLS (company-scoped). Refetched per navigation, so a
+  // newly created project/estimate appears after its revalidatePath.
+  const supabase = await createClient();
+  const [{ data: userData }, { data: company }, { data: projects }, { data: estimates }] =
+    await Promise.all([
+      supabase.auth.getUser(),
+      supabase.from("companies").select("name").eq("id", companyId).maybeSingle(),
+      supabase.from("projects").select("id, name").order("created_at", { ascending: false }),
+      supabase.from("estimates").select("id, name").order("created_at", { ascending: false }),
+    ]);
+  const account = company?.name ?? userData.user?.email ?? null;
+
   return (
-    <div className="min-h-svh">
-      {/* Stacks into two rows on mobile (nav, then account controls) so the
-          links + toggle + Log out don't overflow a phone width; a single
-          row from sm up. The "Home" link is hidden on mobile since the
-          Estimator logo already links home. */}
-      <header className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
-        <MainNav />
-        <div className="flex items-center gap-1">
-          <ThemeToggle />
-          <form action={logout}>
-            <Button type="submit" variant="ghost" size="sm">
-              Log out
-            </Button>
-          </form>
-        </div>
-      </header>
-      <main className="mx-auto max-w-3xl p-4 sm:p-6">{children}</main>
-    </div>
+    <AppShell account={account} projects={projects ?? []} estimates={estimates ?? []}>
+      {children}
+    </AppShell>
   );
 }

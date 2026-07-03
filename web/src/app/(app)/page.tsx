@@ -1,30 +1,10 @@
 import Link from "next/link";
 
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
 
-// The three things you can do on landing, per the app's core loop:
-// search what you've bought, build an estimate from that history, or start
-// a new project to feed more history in. Each routes to the page that
-// already owns the full flow rather than duplicating its form here.
-const ACTIONS = [
-  {
-    href: "/search",
-    title: "Search history",
-    description: "Look up what you've paid before by material, supplier, SKU, or project.",
-  },
-  {
-    href: "/estimates",
-    title: "New estimate",
-    description: "Build a projection — seed it from a past project's purchases or start blank.",
-  },
-  {
-    href: "/projects",
-    title: "New project",
-    description: "Start a container for a job's purchasing documents.",
-  },
-];
-
+// The sidebar owns navigation to Search/Projects/Estimates, so the home page
+// doesn't restate it as action cards -- it shows what the nav can't: recent
+// activity to jump back into.
 export default async function HomePage() {
   const supabase = await createClient();
 
@@ -50,19 +30,6 @@ export default async function HomePage() {
         <p className="text-muted-foreground">
           Your company&apos;s purchasing history, turned into faster estimates.
         </p>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        {ACTIONS.map((action) => (
-          <Link key={action.href} href={action.href} className="block">
-            <Card className="h-full transition-colors hover:bg-accent">
-              <CardHeader>
-                <CardTitle>{action.title}</CardTitle>
-                <CardDescription>{action.description}</CardDescription>
-              </CardHeader>
-            </Card>
-          </Link>
-        ))}
       </div>
 
       <div className="grid gap-8 sm:grid-cols-2">

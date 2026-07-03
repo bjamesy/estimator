@@ -5,7 +5,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {/* Product wordmark above the form so the auth screen reads as the
             front door of the app rather than a bare card. */}
         <div className="text-center">
-          <p className="text-2xl font-semibold">Estimator</p>
+          <p className="text-2xl font-semibold text-primary">Estimator</p>
           <p className="mt-1 text-sm text-muted-foreground">
             Your purchasing history, turned into faster estimates.
           </p>
