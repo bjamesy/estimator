@@ -27,7 +27,7 @@ export default async function DocumentReviewPage({
 
   const { data: document } = await supabase
     .from("documents")
-    .select("id, project_id, status, storage_path")
+    .select("id, project_id, status, storage_path, rejection_reason")
     .eq("id", documentId)
     .single();
 
@@ -116,7 +116,15 @@ export default async function DocumentReviewPage({
         </p>
       )}
 
-      {!extractionResult && document.status !== "failed" && (
+      {document.status === "rejected" && (
+        <p className="text-muted-foreground">
+          This doesn&apos;t look like a purchase document
+          {document.rejection_reason ? ` — ${document.rejection_reason}` : ""}. Nothing was added to
+          your history. If this really is a receipt or invoice, re-upload a clearer copy.
+        </p>
+      )}
+
+      {!extractionResult && document.status !== "failed" && document.status !== "rejected" && (
         <p className="text-muted-foreground">
           Still processing -- no extracted data yet. Refresh in a moment.
         </p>

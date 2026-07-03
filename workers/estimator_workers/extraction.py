@@ -6,7 +6,7 @@ import re
 import pillow_heif
 from anthropic import Anthropic
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from estimator_workers.config import ANTHROPIC_API_KEY
 
@@ -54,17 +54,39 @@ class ExtractionPayload(BaseModel):
     line_items: list[LineItem]
 
 
+# Document types this pipeline can promote into the historical record.
+# Anything else the model sees (a quote, a resume, a blank page) comes back
+# as "other" and is rejected -- see parse_extraction_json.
+ACCEPTED_DOCUMENT_TYPES = {"invoice", "receipt"}
+
 # Ported from web/src/lib/extraction.ts (Phase 2). The "own table cell"
 # constraint was added after Phase 2 testing surfaced a real issue: a line
 # item absorbed an unrelated "THURSDAY DELIVERY" note from elsewhere on the
 # document. See docs/mvp/implementation_plan.md -> Phase 2 notes.
-EXTRACTION_PROMPT = """You are extracting structured data from a photo or scan of a construction supplier invoice or receipt.
+#
+# The classification head (document_type/rejection_reason) is folded into
+# this same call rather than run as a separate pre-flight: the image is
+# already loaded here, so classifying costs a handful of tokens instead of a
+# second full vision request. See docs/architecture.md -> Extraction
+# Pipeline.
+EXTRACTION_PROMPT = """You are processing a photo or scan uploaded to a construction purchasing knowledge base.
+
+First decide whether this document records an ACTUAL COMPLETED PURCHASE -- a supplier invoice or receipt for materials the business already bought and paid for, with priced line items.
+
+The following are NOT accepted, because they are not a record of money actually spent:
+- Quotes, estimates, bids, or price lists (proposed prices, not a purchase)
+- Purchase orders or order confirmations (an order placed, not yet a paid transaction)
+- Account statements (a summary of other invoices, not itself a purchase)
+- Delivery slips or packing lists with no prices
+- Anything that is not a purchasing document at all (a resume, an ID, a letter, a random photo, a blank page)
 
 Return ONLY a JSON object (no markdown fences, no commentary) matching exactly this shape:
 
 {
-  "supplier_name": string,
-  "invoice_date": string | null,  // ISO 8601 date (YYYY-MM-DD), null if not legible
+  "document_type": "invoice" | "receipt" | "other",  // "other" for anything in the NOT-accepted list above
+  "rejection_reason": string | null,  // when "other", one short sentence naming what it appears to be; otherwise null
+  "supplier_name": string | null,     // the supplier's name when accepted; null when "other"
+  "invoice_date": string | null,      // ISO 8601 date (YYYY-MM-DD), null if not legible
   "total": number | null,
   "line_items": [
     {
@@ -77,7 +99,9 @@ Return ONLY a JSON object (no markdown fences, no commentary) matching exactly t
   ]
 }
 
-Each line item's description must come only from that item's own row/cell in the table. Do not append delivery notes, stamps, handwriting, or any other text from elsewhere on the document into a line item's description.
+When document_type is "other", set rejection_reason and you may leave supplier_name null and line_items empty.
+
+For an accepted invoice or receipt: each line item's description must come only from that item's own row/cell in the table. Do not append delivery notes, stamps, handwriting, or any other text from elsewhere on the document into a line item's description.
 
 If a multi-line description wraps across rows in the source table, join it into one description string. If a field is illegible, use null (or omit the line item entirely if it's unreadable). Do not invent data that is not visibly printed on the document."""
 
@@ -138,7 +162,31 @@ def call_vision_llm(file_bytes: bytes, mime_type: str) -> str:
     return text_block.text
 
 
-def parse_extraction_json(raw_text: str) -> ExtractionPayload:
+class NonRetryableExtractionError(Exception):
+    """The LLM's output is deterministically unusable, so retrying is
+    pointless -- the same text re-parses to the same failure every time.
+
+    This is for *malformed* output (non-JSON prose, or an accepted
+    invoice/receipt whose payload fails validation). It is NOT the path for
+    a non-purchase document -- that comes back cleanly as document_type
+    "other" and is a rejection (a successful classification), not a failure.
+    _run_stage (workers/estimator_workers/tasks.py) treats this as a terminal
+    failure on the first attempt instead of burning MAX_RETRIES backoffs to
+    reach the same conclusion."""
+
+
+class ParseOutcome(BaseModel):
+    """The result of parsing the vision LLM's output. Exactly one state
+    holds: `rejected` (a non-purchase document -- payload is None, carry the
+    reason to the review page) or accepted (a validated ExtractionPayload
+    ready to promote)."""
+
+    rejected: bool
+    rejection_reason: str | None = None
+    payload: ExtractionPayload | None = None
+
+
+def parse_extraction_json(raw_text: str) -> ParseOutcome:
     # The prompt asks for raw JSON, but models sometimes wrap it in a
     # markdown code fence anyway -- strip that defensively rather than
     # relying on prompt compliance alone.
@@ -148,9 +196,36 @@ def parse_extraction_json(raw_text: str) -> ExtractionPayload:
     try:
         data = json.loads(json_text)
     except json.JSONDecodeError:
-        raise ValueError(f"Vision LLM did not return valid JSON: {raw_text[:500]}")
+        raise NonRetryableExtractionError(
+            f"Vision LLM did not return valid JSON: {raw_text[:500]}"
+        )
 
-    payload = ExtractionPayload.model_validate(data)
+    if not isinstance(data, dict):
+        raise NonRetryableExtractionError(
+            f"Vision LLM returned non-object JSON: {raw_text[:500]}"
+        )
+
+    # Classification gate. A document that isn't a completed purchase (a
+    # quote, a resume, a blank page) is rejected here before any attempt to
+    # validate invoice fields -- this is why a non-invoice never reaches the
+    # supplier_name check below and never terminal-fails as "malformed". A
+    # missing/unknown document_type is treated as "other" (fail safe: don't
+    # promote something we couldn't confirm is a purchase).
+    if data.get("document_type") not in ACCEPTED_DOCUMENT_TYPES:
+        reason = data.get("rejection_reason")
+        if not isinstance(reason, str) or not reason.strip():
+            reason = "This does not appear to be an invoice or receipt."
+        return ParseOutcome(rejected=True, rejection_reason=reason.strip())
+
+    try:
+        payload = ExtractionPayload.model_validate(data)
+    except ValidationError as exc:
+        # The model classified this as an invoice/receipt but the payload
+        # doesn't hold together (e.g. supplier_name=null despite the type).
+        # Deterministic, so don't retry. See NonRetryableExtractionError.
+        raise NonRetryableExtractionError(
+            f"Extracted data did not match the expected invoice shape: {exc}"
+        )
 
     # A line item with any illegible numeric field isn't usable historical
     # data -- it's more honest to drop it than to fabricate a value (e.g.
@@ -164,4 +239,4 @@ def parse_extraction_json(raw_text: str) -> ExtractionPayload:
         if item.quantity is not None and item.unit_price is not None and item.total is not None
     ]
 
-    return payload
+    return ParseOutcome(rejected=False, payload=payload)

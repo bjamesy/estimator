@@ -2,17 +2,21 @@ import base64
 from typing import Callable, TypeVar
 
 from celery import Task, chain
+from celery.utils.log import get_task_logger
 from postgrest.exceptions import APIError
 
 from estimator_workers.celery_app import app
 from estimator_workers.events import finish_event, mark_document_failed, start_event
 from estimator_workers.extraction import (
     SUPPORTED_MIME_TYPES,
+    NonRetryableExtractionError,
     call_vision_llm,
     parse_extraction_json,
 )
 from estimator_workers.matching import match_line_items_to_catalog
 from estimator_workers.supabase_client import get_supabase
+
+logger = get_task_logger(__name__)
 
 POSTGRES_UNIQUE_VIOLATION = "23505"
 
@@ -31,6 +35,14 @@ def _run_stage(task: Task, document_id: str, stage: str, fn: Callable[[], T]) ->
     event_id = start_event(document_id, stage, attempt_number)
     try:
         result = fn()
+    except NonRetryableExtractionError as exc:
+        # Deterministic given the LLM's already-produced output (e.g. a
+        # non-invoice upload with no supplier_name). Retrying re-parses the
+        # identical text and fails identically, so fail terminally on the
+        # first attempt instead of burning MAX_RETRIES backoffs.
+        finish_event(event_id, "failed", str(exc))
+        mark_document_failed(document_id)
+        raise
     except Exception as exc:
         finish_event(event_id, "failed", str(exc))
         if task.request.retries >= task.max_retries:
@@ -86,10 +98,42 @@ def parse(
     self: Task, raw_text: str, document_id: str, company_id: str, storage_path: str
 ) -> None:
     def _parse() -> None:
-        payload = parse_extraction_json(raw_text)
+        outcome = parse_extraction_json(raw_text)
         supabase = get_supabase()
+        if outcome.rejected:
+            # Not a purchase document. This is a successful classification,
+            # not a pipeline failure -- record it as a distinct terminal
+            # state carrying the model's reason, and write no
+            # ExtractionResult (there is nothing to promote or confirm). The
+            # review page renders 'rejected' calmly rather than as an error.
+            # Note: this is the one place a stage's own work writes
+            # documents.status on success; _run_stage still only writes
+            # status on terminal *failure*.
+            supabase.table("documents").update(
+                {"status": "rejected", "rejection_reason": outcome.rejection_reason}
+            ).eq("id", document_id).execute()
+
+            # A rejected file isn't part of the purchasing record, so the
+            # "originals are always retained" principle doesn't cover it --
+            # and it may be a sensitive misfire (a resume, a photo of an ID).
+            # Delete the stored object, keeping the row above as a tombstone
+            # that still shows the outcome and reason in the UI. Best-effort:
+            # the rejection is already durably recorded, so a failed cleanup
+            # must not fail (and retry) the stage -- it just leaves an orphan
+            # object a later sweep can reclaim. Ordered after the row update
+            # so we never delete bytes for a rejection we didn't persist.
+            try:
+                supabase.storage.from_("documents").remove([storage_path])
+            except Exception:
+                logger.warning(
+                    "Failed to delete storage object for rejected document %s (%s); "
+                    "row is recorded, object orphaned.",
+                    document_id,
+                    storage_path,
+                )
+            return
         supabase.table("extraction_results").insert(
-            {"document_id": document_id, "payload": payload.model_dump()}
+            {"document_id": document_id, "payload": outcome.payload.model_dump()}
         ).execute()
 
     return _run_stage(self, document_id, "parse", _parse)

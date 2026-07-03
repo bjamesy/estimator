@@ -16,6 +16,7 @@ type Document = {
   storage_path: string;
   status: string;
   created_at: string;
+  rejection_reason: string | null;
 };
 
 type LatestEvent = {
@@ -29,6 +30,9 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive"> = 
   pending: "secondary",
   confirmed: "default",
   failed: "destructive",
+  // A rejected (non-purchase) document is a normal outcome, not an error --
+  // keep it muted rather than destructive-red.
+  rejected: "secondary",
 };
 
 const POLL_INTERVAL_MS = 2000;
@@ -94,7 +98,10 @@ export function DocumentsTable({
     async function poll() {
       setNow(Date.now());
       const [{ data: docs }, { data: events }, { data: results }] = await Promise.all([
-        supabase.from("documents").select("id, storage_path, status, created_at").in("id", pendingIds),
+        supabase
+          .from("documents")
+          .select("id, storage_path, status, created_at, rejection_reason")
+          .in("id", pendingIds),
         supabase
           .from("document_processing_events")
           .select("document_id, stage, status, error_message, started_at")
@@ -199,6 +206,11 @@ export function DocumentsTable({
                   {doc.status === "failed" && latest?.error_message && (
                     <span className="max-w-xs truncate text-xs text-destructive">
                       {latest.stage} failed: {latest.error_message}
+                    </span>
+                  )}
+                  {doc.status === "rejected" && (
+                    <span className="max-w-xs truncate text-xs text-muted-foreground">
+                      {doc.rejection_reason ?? "Not a purchase document"}
                     </span>
                   )}
                 </div>
