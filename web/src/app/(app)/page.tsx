@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { createClient } from "@/lib/supabase/server";
 
 // The sidebar owns navigation to Search/Projects/Estimates, so the home page
@@ -36,7 +37,12 @@ export default async function HomePage() {
         <RecentSection
           title="Recent projects"
           viewAllHref="/projects"
-          emptyLabel="No projects yet."
+          empty={{
+            title: "No projects yet",
+            description:
+              "A project holds one job's purchasing history. Create one, then upload its receipts and invoices.",
+            action: { href: "/projects", label: "New project" },
+          }}
           items={(projects ?? []).map((p) => ({
             href: `/projects/${p.id}`,
             primary: p.name,
@@ -45,7 +51,12 @@ export default async function HomePage() {
         <RecentSection
           title="Recent estimates"
           viewAllHref="/estimates"
-          emptyLabel="No estimates yet."
+          empty={{
+            title: "No estimates yet",
+            description:
+              "Estimates draw on your whole purchasing history to price new work. Build one once you've uploaded some documents.",
+            action: { href: "/estimates", label: "New estimate" },
+          }}
           items={(estimates ?? []).map((e) => ({
             href: `/estimates/${e.id}`,
             primary: e.name,
@@ -60,12 +71,12 @@ export default async function HomePage() {
 function RecentSection({
   title,
   viewAllHref,
-  emptyLabel,
+  empty,
   items,
 }: {
   title: string;
   viewAllHref: string;
-  emptyLabel: string;
+  empty: { title: string; description: string; action: { href: string; label: string } };
   items: { href: string; primary: string; secondary?: string }[];
 }) {
   return (
@@ -93,7 +104,11 @@ function RecentSection({
           ))}
         </ul>
       ) : (
-        <p className="text-muted-foreground">{emptyLabel}</p>
+        <EmptyState
+          title={empty.title}
+          description={empty.description}
+          action={empty.action}
+        />
       )}
     </div>
   );

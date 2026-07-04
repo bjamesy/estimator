@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   Table,
   TableBody,
@@ -94,9 +95,10 @@ export async function MaterialSummary({ projectId }: { projectId: string }) {
 
   if (sorted.length === 0) {
     return (
-      <p className="text-muted-foreground">
-        No materials yet — confirm some documents to build this project&apos;s purchasing summary.
-      </p>
+      <EmptyState
+        title="No materials yet"
+        description="Confirm some uploaded documents on the Documents tab and their line items will roll up here into this project's purchasing summary."
+      />
     );
   }
 

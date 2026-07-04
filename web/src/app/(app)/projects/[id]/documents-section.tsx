@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import { createClient } from "@/lib/supabase/server";
 
 import { DocumentsTable } from "./documents-table";
@@ -28,7 +29,10 @@ export async function DocumentsSection({ projectId }: { projectId: string }) {
       {documents && documents.length > 0 ? (
         <DocumentsTable projectId={projectId} documents={documents} readyForReview={readyForReview} />
       ) : (
-        <p className="text-muted-foreground">No documents uploaded yet.</p>
+        <EmptyState
+          title="No documents yet"
+          description="Upload a receipt or invoice above. We'll extract its line items so they become searchable purchasing history."
+        />
       )}
     </div>
   );
