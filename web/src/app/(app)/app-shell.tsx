@@ -2,7 +2,7 @@
 
 import { HouseIcon, MenuIcon, SearchIcon, XIcon } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { logout } from "@/app/actions/auth";
@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
 type Item = { id: string; name: string };
 
 const PRIMARY_NAV = [
-  { href: "/", label: "Home", icon: HouseIcon, exact: true },
-  { href: "/search", label: "Search", icon: SearchIcon },
+  { href: "/", label: "Home", icon: HouseIcon, exact: true, shortcut: undefined },
+  { href: "/search", label: "Search", icon: SearchIcon, exact: false, shortcut: "⌘K" },
 ];
 
 // Shared pill styling for an active vs. inactive sidebar row.
@@ -39,6 +39,7 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   // Close the mobile drawer on route change so a nav tap doesn't leave it
@@ -46,6 +47,19 @@ export function AppShell({
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  // Global ⌘K / Ctrl+K jumps to search from anywhere; the search input there
+  // autofocuses on arrival, so the shortcut lands the cursor ready to type.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        router.push("/search");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
 
   const sidebar = (
     <div className="flex h-full flex-col gap-4 p-4">
@@ -72,6 +86,11 @@ export function AppShell({
               >
                 <Icon className="size-4 shrink-0" />
                 {item.label}
+                {item.shortcut && (
+                  <kbd className="ml-auto hidden rounded border border-current/25 px-1.5 py-0.5 text-[10px] font-medium opacity-70 md:inline-block">
+                    {item.shortcut}
+                  </kbd>
+                )}
               </Link>
             );
           })}
@@ -174,7 +193,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-3xl flex-1 p-4 sm:p-6">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">{children}</main>
 
         <footer className="border-t px-4 py-4 sm:px-6">
           <p className="text-center text-sm text-muted-foreground">

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CreateFromProjectForm } from "@/app/(app)/estimates/create-from-project-form";
+import { EmptyState } from "@/components/ui/empty-state";
 import { createClient } from "@/lib/supabase/server";
 
 // The Estimates tab: seed a new estimate from this project's purchases, and
@@ -31,7 +32,10 @@ export async function EstimatesSection({ projectId }: { projectId: string }) {
           ))}
         </ul>
       ) : (
-        <p className="text-muted-foreground">No estimates linked to this project yet.</p>
+        <EmptyState
+          title="No estimates for this project yet"
+          description="Seed an estimate from this project's purchases above, or build a company-wide one from the Estimates page."
+        />
       )}
     </div>
   );
