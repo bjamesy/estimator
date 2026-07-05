@@ -20,7 +20,9 @@ Company
 ├── Estimate                          (1:N — company-scoped; optional FK to Project)
 │   ├── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
 │   └── EstimateVersion               (1:N — immutable snapshots; substrate for change orders)
-│       └── EstimateVersionLine       (1:N — frozen copy of the draft lines at snapshot time)
+│       ├── EstimateVersionLine       (1:N — frozen copy of the draft lines at snapshot time)
+│       ├── EstimateSignature         (0-2:1 — contractor + client signatures; immutable)
+│       └── ClientSigningToken        (1:N — hashed, single-use, expiring public signing links)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
@@ -289,3 +291,39 @@ EstimateVersionLine
 ```
 
 Lines are matched across versions by `source_estimate_line_id` (which draft line they froze), not by description. `change_kind` is computed at snapshot time against the parent version's non-removed lines; on the root version every line is `unchanged` (the root is the baseline). `removed` rows are lines that existed in the parent but not in this snapshot — carried into the new version with the parent's frozen values so a change order is self-contained, shown struck-through, and excluded from the version's `total`.
+
+## EstimateSignature
+
+```
+EstimateSignature
+  id
+  estimate_version_id  FK → EstimateVersion, RESTRICT
+  company_id           FK → Company, RESTRICT
+  signer_role          "contractor" | "client" — unique (estimate_version_id, signer_role)
+  signer_name
+  signer_email         nullable — captured for the client if offered
+  signature_data       v1: the typed full name adopted as the signature; opaque text so a
+                        drawn capture or e-signature provider reference can reuse the column
+  ip_address           nullable — best-effort audit metadata from request headers
+  user_agent           nullable
+  signed_at
+  created_at
+```
+
+The legal artifact of the signing lifecycle (`0017_signatures.sql`). Unlike every other table's blanket `for all` company policy, `estimate_signatures` has **no update or delete RLS policies** — once a signature row exists, nobody (including the contractor's own authenticated session) can alter or remove it through the API. The contractor's signature is inserted via the authed client under the company insert policy; the client's is inserted via the server-side admin client (no session exists on the public signing page). The `(estimate_version_id, signer_role)` unique constraint doubles as the atomic backstop against raced double-signs. Capture mechanics live behind `web/src/lib/signatures.ts` so a certified e-signature provider can replace in-house capture without touching the lifecycle.
+
+## ClientSigningToken
+
+```
+ClientSigningToken
+  id
+  estimate_version_id  FK → EstimateVersion, RESTRICT
+  company_id           FK → Company, RESTRICT
+  token_hash           SHA-256 of the raw token, unique — the raw token exists only in the
+                        signing URL; a database read can never recover a usable link
+  expires_at           30 days from mint (SIGNING_TOKEN_TTL_DAYS)
+  used_at              nullable — set atomically when the client signs (single-use claim)
+  created_at
+```
+
+Authorizes the no-account client signing page (`/sign/[token]`). 256-bit random tokens; validation and all data access on the public page go through the admin client — there are deliberately no anon RLS policies anywhere. Authenticated policies are select/insert/delete only (no update): a contractor can mint and revoke unused links (minting a new link deletes prior unused ones — at most one live link per version), but can't tamper with `used_at`/`expires_at` to resurrect a consumed or expired link. The signing action's status gate (`pending_client_signature` only) means a link for a version superseded mid-signing refuses calmly.

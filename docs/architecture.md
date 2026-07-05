@@ -48,6 +48,8 @@ All data is company-scoped; there is no cross-company sharing in MVP (see `mvp/p
 
 **Exception:** `Supplier` is a deliberate, global, non-company-scoped table — see Data Model below. It carries no `company_id` and is intentionally outside RLS. Anything company-specific about a supplier relationship lives on `CompanySupplier`, which is company-scoped like everything else.
 
+**Exception (v2, change orders):** the public client-signing page (`/sign/[token]`, `web/src/app/sign/`) is the one surface with no session at all — clients are not users. Authorization is the 256-bit single-use signing token in the URL itself (stored only as a hash; see `ClientSigningToken` in `data_model.md`). Because no RLS identity exists for a signing client, that page and its action (`web/src/app/actions/client-signing.ts`) run through the server-side admin client, keyed strictly off the token row's own ids — there are deliberately **no anon RLS policies** anywhere. The middleware allowlists `/sign` without bouncing signed-in users (`TOKEN_AUTHORIZED_PATHS`, `web/src/lib/supabase/middleware.ts`). Relatedly, `estimate_signatures` narrows the usual blanket `for all` company policy to select+insert only — a signed change order is a legal artifact no session may alter (see `0017_signatures.sql`).
+
 ---
 
 ## Document Storage

@@ -1,9 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { tryGetCurrentCompanyId } from "@/lib/company";
+import {
+  generateSigningToken,
+  hashSigningToken,
+  signingTokenExpiry,
+} from "@/lib/signatures";
 import { createClient } from "@/lib/supabase/server";
 
 const POSTGRES_UNIQUE_VIOLATION = "23505";
@@ -262,4 +268,183 @@ export async function snapshotEstimateVersion(
 
   revalidatePath(`/estimates/${estimateId}`);
   redirect(`/estimates/${estimateId}/versions/${version.id}`);
+}
+
+// Best-effort audit metadata from request headers (spec: "IP/device
+// metadata optional") -- a proxy may strip either, so both are nullable.
+async function requestAuditMetadata(): Promise<{
+  ip_address: string | null;
+  user_agent: string | null;
+}> {
+  const h = await headers();
+  const forwardedFor = h.get("x-forwarded-for");
+  return {
+    ip_address: forwardedFor?.split(",")[0]?.trim() ?? h.get("x-real-ip"),
+    user_agent: h.get("user-agent"),
+  };
+}
+
+// The signing URL is built from the request's own host so it works in
+// any environment without a configured site-URL env var.
+async function buildSigningUrl(rawToken: string): Promise<string> {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("host");
+  return `${proto}://${host}/sign/${rawToken}`;
+}
+
+// Mints a fresh client signing token for a version, revoking any unused
+// prior tokens (a version has at most one live link; a lost link is
+// replaced, not resurrected -- the raw token is never stored, only its
+// hash, so it *can't* be resurrected). Returns the full signing URL,
+// which is shown to the contractor exactly once per mint.
+async function mintSigningToken(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  versionId: string,
+  companyId: string,
+): Promise<{ signingUrl: string } | { error: string }> {
+  await supabase
+    .from("client_signing_tokens")
+    .delete()
+    .eq("estimate_version_id", versionId)
+    .is("used_at", null);
+
+  const rawToken = generateSigningToken();
+  const { error } = await supabase.from("client_signing_tokens").insert({
+    estimate_version_id: versionId,
+    company_id: companyId,
+    token_hash: hashSigningToken(rawToken),
+    expires_at: signingTokenExpiry().toISOString(),
+  });
+  if (error) {
+    return { error: error.message };
+  }
+  return { signingUrl: await buildSigningUrl(rawToken) };
+}
+
+type SignContractorState = {
+  error: string | null;
+  signingUrl?: string;
+};
+
+// Contractor signs a draft version: records the signature (immutable --
+// estimate_signatures has no update/delete policies), advances the
+// lifecycle to pending_client_signature, and mints the client signing
+// link. v1 capture is a typed full name adopted as the signature; the
+// capture mechanism is isolated behind web/src/lib/signatures.ts so a
+// certified e-signature provider can replace it without touching this
+// state machine. See docs/v2/plans/01-change-orders-plan.md -> Phase 3.
+export async function signVersionAsContractor(
+  versionId: string,
+  estimateId: string,
+  _prevState: unknown,
+  formData: FormData,
+): Promise<SignContractorState> {
+  const signerName = (formData.get("signer_name") as string)?.trim();
+  const consent = formData.get("consent") === "on";
+  if (!signerName) {
+    return { error: "Type your full name to sign." };
+  }
+  if (!consent) {
+    return { error: "You must confirm the statement to sign." };
+  }
+
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const { data: version } = await supabase
+    .from("estimate_versions")
+    .select("id, status")
+    .eq("id", versionId)
+    .eq("estimate_id", estimateId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!version) {
+    return { error: "Version not found." };
+  }
+  if (version.status !== "draft") {
+    return { error: "Only a draft version can be signed. This one is already in signing or superseded." };
+  }
+
+  const audit = await requestAuditMetadata();
+  const { error: signatureError } = await supabase.from("estimate_signatures").insert({
+    estimate_version_id: versionId,
+    company_id: companyId,
+    signer_role: "contractor",
+    signer_name: signerName,
+    signature_data: signerName,
+    ...audit,
+  });
+  if (signatureError?.code === POSTGRES_UNIQUE_VIOLATION) {
+    return { error: "This version already has a contractor signature." };
+  }
+  if (signatureError) {
+    return { error: signatureError.message };
+  }
+
+  // Signature row is in (and can no longer be altered); advance the
+  // lifecycle. If this update failed the signature would still stand,
+  // which is the right failure order for a legal artifact.
+  const { error: statusError } = await supabase
+    .from("estimate_versions")
+    .update({
+      status: "pending_client_signature",
+      contractor_signed_at: new Date().toISOString(),
+    })
+    .eq("id", versionId)
+    .eq("status", "draft");
+  if (statusError) {
+    return { error: statusError.message };
+  }
+
+  const minted = await mintSigningToken(supabase, versionId, companyId);
+  // Deliberately NO revalidatePath here: revalidating this page (or a
+  // parent segment) re-renders the server tree, which swaps this form
+  // out for SigningLinkPanel and unmounts the client state holding the
+  // one-time signing URL before the contractor can copy it (observed
+  // live). The page shows the fresh status on the next navigation; the
+  // link display wins now.
+  if ("error" in minted) {
+    return { error: `Signed, but couldn't create the client link: ${minted.error}` };
+  }
+  return { error: null, signingUrl: minted.signingUrl };
+}
+
+// Regenerates the client signing link for a version awaiting the client
+// -- the only way to recover a link, since raw tokens are never stored.
+// Revokes any prior unused link as a side effect (see mintSigningToken).
+export async function regenerateSigningLink(
+  versionId: string,
+  estimateId: string,
+  _prevState: unknown,
+  _formData: FormData,
+): Promise<SignContractorState> {
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const { data: version } = await supabase
+    .from("estimate_versions")
+    .select("id, status")
+    .eq("id", versionId)
+    .eq("estimate_id", estimateId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!version) {
+    return { error: "Version not found." };
+  }
+  if (version.status !== "pending_client_signature") {
+    return { error: "This version isn't awaiting a client signature." };
+  }
+
+  const minted = await mintSigningToken(supabase, versionId, companyId);
+  if ("error" in minted) {
+    return { error: minted.error };
+  }
+  return { error: null, signingUrl: minted.signingUrl };
 }
