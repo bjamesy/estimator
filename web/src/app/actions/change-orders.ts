@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { publishRenderChangeOrderPdfTask } from "@/lib/celery";
 import { tryGetCurrentCompanyId } from "@/lib/company";
 import {
   generateSigningToken,
@@ -447,4 +448,44 @@ export async function regenerateSigningLink(
     return { error: minted.error };
   }
   return { error: null, signingUrl: minted.signingUrl };
+}
+
+// Manual (re-)publish of the legal PDF render for an executed version --
+// the recovery path when the automatic publish at client-signing time
+// failed (broker hiccup), and the backfill path for versions executed
+// before Phase 4 existed. Safe to repeat: the worker task upserts an
+// identical, deterministically-rendered object.
+export async function requestChangeOrderPdf(
+  versionId: string,
+  estimateId: string,
+  _prevState: unknown,
+  _formData: FormData,
+): Promise<{ error: string | null }> {
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const { data: version } = await supabase
+    .from("estimate_versions")
+    .select("id, status")
+    .eq("id", versionId)
+    .eq("estimate_id", estimateId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (!version) {
+    return { error: "Version not found." };
+  }
+  if (version.status !== "executed") {
+    return { error: "Only an executed version has a PDF — sign it first." };
+  }
+
+  try {
+    await publishRenderChangeOrderPdfTask(versionId, companyId);
+  } catch (exc) {
+    return { error: `Couldn't queue the PDF render: ${exc instanceof Error ? exc.message : "unknown error"}` };
+  }
+  revalidatePath(`/estimates/${estimateId}/versions/${versionId}`);
+  return { error: null };
 }

@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { publishRenderChangeOrderPdfTask } from "@/lib/celery";
 import { hashSigningToken } from "@/lib/signatures";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -112,6 +113,15 @@ export async function signVersionAsClient(
     })
     .eq("id", version.id)
     .eq("status", "pending_client_signature");
+
+  // Kick off the legal PDF render (Phase 4). Best-effort: the signing is
+  // already durably recorded, so a broker hiccup must not fail it -- the
+  // contractor's version page offers a manual "Generate PDF" retry.
+  try {
+    await publishRenderChangeOrderPdfTask(version.id, token.company_id);
+  } catch {
+    // pdf_storage_path stays null; retry surface covers it.
+  }
 
   // Fresh server render of the same URL now shows the executed state.
   redirect(`/sign/${rawToken}`);

@@ -30,7 +30,7 @@ Upload document
 | Web app | Next.js (TypeScript) | Frontend + server-side API routes |
 | Async workers | Python + Celery | Extraction pipeline; runs as a separate service |
 | Message broker | RabbitMQ | Chosen over Redis for durable queue semantics and reliable ack/nack in multi-stage pipelines; run managed (e.g. CloudAMQP) |
-| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent`, `ExtractionResult`, and `MaterialMatch`/`MaterialCatalog` (via the `match_materials` task); Next.js owns `Invoice`, `LineItem`, `Estimate`/`EstimateLine`, and `Document.status` transitions (worker writes the terminal `failed` and `rejected` statuses) |
+| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent`, `ExtractionResult`, `MaterialMatch`/`MaterialCatalog` (via the `match_materials` task), and `EstimateVersion.pdf_storage_path` (via the `render_change_order_pdf` task); Next.js owns `Invoice`, `LineItem`, `Estimate`/`EstimateLine`, `EstimateVersion`/`EstimateVersionLine`/`EstimateSignature`/`ClientSigningToken`, and `Document.status` transitions (worker writes the terminal `failed` and `rejected` statuses) |
 | File storage | Supabase Storage | S3-compatible; used for original documents; avoids a second storage vendor |
 | Extraction & matching | Claude (`claude-sonnet-5`), via Anthropic's API | One vision call per document for extraction (`workers/estimator_workers/extraction.py`); one batched text call per confirmed invoice for material matching (`workers/estimator_workers/matching.py`) |
 

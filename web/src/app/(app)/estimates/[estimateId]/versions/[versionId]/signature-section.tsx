@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 
 import {
   regenerateSigningLink,
+  requestChangeOrderPdf,
   signVersionAsContractor,
 } from "@/app/actions/change-orders";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,40 @@ export function SignContractorForm({
       </Button>
       {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
     </form>
+  );
+}
+
+// Shown on an executed version that has no rendered PDF yet -- either the
+// render is still in flight, the automatic publish at signing time
+// failed, or the version executed before PDF rendering existed. Queues
+// (or re-queues) the render; safe to repeat.
+export function GeneratePdfButton({
+  versionId,
+  estimateId,
+}: {
+  versionId: string;
+  estimateId: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    requestChangeOrderPdf.bind(null, versionId, estimateId),
+    null,
+  );
+
+  return (
+    <div className="flex flex-col gap-1">
+      {state && state.error === null ? (
+        <p className="text-sm text-muted-foreground">
+          PDF queued — it will appear here shortly. Refresh the page.
+        </p>
+      ) : (
+        <form action={formAction}>
+          <Button type="submit" size="sm" variant="outline" disabled={pending}>
+            {pending ? "Queuing..." : "Generate PDF"}
+          </Button>
+        </form>
+      )}
+      {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+    </div>
   );
 }
 

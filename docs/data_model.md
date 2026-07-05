@@ -267,10 +267,14 @@ EstimateVersion
                           threshold requiring documented client consent
   contractor_signed_at   timestamptz, nullable (signing lands in change-orders Phase 3)
   client_signed_at       timestamptz, nullable
+  pdf_storage_path       text, nullable — the rendered legal PDF for an executed version;
+                          written by the render_change_order_pdf worker task (Phase 4)
   created_at
 ```
 
-An immutable snapshot of the estimate's active draft lines — the substrate for change orders (`docs/v2/plans/01-change-orders-plan.md`, `0016_estimate_versions.sql`). The live `Estimate`/`EstimateLine` stay the editable working draft; `snapshotEstimateVersion` (`web/src/app/actions/change-orders.ts`) freezes them into a new version. Append-only: after creation, only `status` and the signature timestamps ever change, and only forward through the lifecycle. The whole chain is `ON DELETE RESTRICT` — a signed change order is a legal artifact, same retention discipline as the `Document → Invoice → LineItem` chain. A new snapshot marks the previous version `superseded` unless it was `executed` — executed versions are never touched. A snapshot identical to the latest version is refused.
+An immutable snapshot of the estimate's active draft lines — the substrate for change orders (`docs/v2/plans/01-change-orders-plan.md`, `0016_estimate_versions.sql`). The live `Estimate`/`EstimateLine` stay the editable working draft; `snapshotEstimateVersion` (`web/src/app/actions/change-orders.ts`) freezes them into a new version. Append-only: after creation, only `status`, the signature timestamps, and `pdf_storage_path` ever change, and only forward through the lifecycle.
+
+**The PDF is the legal artifact; structured rows are for search.** On execution, the client-signing action best-effort publishes `render_change_order_pdf` (`workers/estimator_workers/change_order_pdf.py` + `tasks.py`), which renders the version deterministically from its immutable rows and uploads to the `documents` bucket under `{company_id}/change-orders/{version_id}.pdf` — covered by the existing company-prefix storage policy (`0005`). Re-rendering is idempotent (upsert of identical content), so the version page offers a manual "Generate PDF" retry for publish failures and pre-Phase-4 executed versions. All document language lives in template slots (`TEMPLATE`, placeholder copy pending the lawyer-vetted template), never inline in rendering code. The whole chain is `ON DELETE RESTRICT` — a signed change order is a legal artifact, same retention discipline as the `Document → Invoice → LineItem` chain. A new snapshot marks the previous version `superseded` unless it was `executed` — executed versions are never touched. A snapshot identical to the latest version is refused.
 
 ## EstimateVersionLine
 

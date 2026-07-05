@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.9",
     "Pillow>=11.0",
     "pillow-heif>=0.18",
+    "fpdf2>=2.8",
 ]
 
 [build-system]

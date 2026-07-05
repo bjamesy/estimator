@@ -6,6 +6,7 @@ from celery.utils.log import get_task_logger
 from postgrest.exceptions import APIError
 
 from estimator_workers.celery_app import app
+from estimator_workers.change_order_pdf import ChangeOrderData, render_change_order_pdf
 from estimator_workers.events import finish_event, mark_document_failed, start_event
 from estimator_workers.extraction import (
     SUPPORTED_MIME_TYPES,
@@ -251,5 +252,106 @@ def match_materials(self: Task, invoice_id: str, company_id: str) -> None:
             # No Document/status equivalent to flip -- matching failure just
             # means no MaterialMatch rows exist yet. The confirmed
             # Invoice/LineItem records are unaffected either way.
+            raise
+        raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))
+
+
+# Renders the legal PDF artifact for an EXECUTED estimate version and
+# records its storage path. Published best-effort by the client signing
+# action (web/src/app/actions/client-signing.ts) after execution, and
+# re-publishable from the version page's "Generate PDF" button -- the PDF
+# is deterministically derived from the version's immutable rows, so
+# re-running (or a retry racing a duplicate publish) just overwrites the
+# object with identical content (upsert). Like match_materials, no
+# DocumentProcessingEvent equivalent: failure means pdf_storage_path stays
+# null and the UI keeps offering the manual retry.
+# See docs/v2/plans/01-change-orders-plan.md -> Phase 4.
+@app.task(bind=True, name="estimator_workers.tasks.render_change_order_pdf", max_retries=MAX_RETRIES)
+def render_change_order_pdf_task(self: Task, version_id: str, company_id: str) -> None:
+    try:
+        supabase = get_supabase()
+
+        version = (
+            supabase.table("estimate_versions")
+            .select("id, estimate_id, company_id, version_number, status, total, "
+                    "pct_change_from_root, created_at")
+            .eq("id", version_id)
+            .eq("company_id", company_id)  # payload scoping, same as other tasks
+            .single()
+            .execute()
+            .data
+        )
+        if version["status"] != "executed":
+            # Only an executed version is a legal artifact. A stale/errant
+            # publish for a non-executed version is a no-op, not an error.
+            logger.info("Version %s is %s, not executed; skipping PDF.", version_id, version["status"])
+            return
+
+        lines = (
+            supabase.table("estimate_version_lines")
+            .select("description, quantity, unit_price, markup_percent, total, change_kind, created_at")
+            .eq("estimate_version_id", version_id)
+            .order("created_at")
+            .execute()
+            .data
+        )
+        signatures = (
+            supabase.table("estimate_signatures")
+            .select("signer_role, signer_name, signature_data, signed_at")
+            .eq("estimate_version_id", version_id)
+            .order("signed_at")
+            .execute()
+            .data
+        )
+        estimate = (
+            supabase.table("estimates")
+            .select("name, companies(name)")
+            .eq("id", version["estimate_id"])
+            .single()
+            .execute()
+            .data
+        )
+
+        root_total = None
+        if version["version_number"] != 1:
+            root = (
+                supabase.table("estimate_versions")
+                .select("total")
+                .eq("estimate_id", version["estimate_id"])
+                .eq("version_number", 1)
+                .single()
+                .execute()
+                .data
+            )
+            root_total = root["total"]
+
+        pdf_bytes = render_change_order_pdf(
+            ChangeOrderData(
+                company_name=(estimate.get("companies") or {}).get("name", ""),
+                estimate_name=estimate["name"],
+                version_number=version["version_number"],
+                created_at=version["created_at"],
+                total=version["total"],
+                root_total=root_total,
+                pct_change_from_root=version["pct_change_from_root"],
+                lines=lines,
+                signatures=signatures,
+            )
+        )
+
+        # Same bucket + {company_id}/ prefix as original documents, so the
+        # company-scoped storage policy (0005) covers it unchanged.
+        storage_path = f"{company_id}/change-orders/{version_id}.pdf"
+        supabase.storage.from_("documents").upload(
+            storage_path,
+            pdf_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"},
+        )
+
+        supabase.table("estimate_versions").update({"pdf_storage_path": storage_path}).eq(
+            "id", version_id
+        ).execute()
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
             raise
         raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))

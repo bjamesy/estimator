@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, CheckCircle2Icon } from "lucide-react";
+import { ArrowLeftIcon, CheckCircle2Icon, FileDownIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 
-import { SignContractorForm, SigningLinkPanel } from "./signature-section";
+import { GeneratePdfButton, SignContractorForm, SigningLinkPanel } from "./signature-section";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
@@ -34,7 +34,7 @@ export default async function EstimateVersionPage({
   const { data: version } = await supabase
     .from("estimate_versions")
     .select(
-      "id, version_number, status, total, pct_change_from_root, created_at, contractor_signed_at, client_signed_at, estimates(name)",
+      "id, version_number, status, total, pct_change_from_root, created_at, contractor_signed_at, client_signed_at, pdf_storage_path, estimates(name)",
     )
     .eq("id", versionId)
     .eq("estimate_id", estimateId)
@@ -79,6 +79,17 @@ export default async function EstimateVersionPage({
 
   const pct = version.pct_change_from_root;
 
+  // The rendered legal PDF (Phase 4). Signed URL is short-lived and
+  // per-render; the storage object sits under the company prefix, so the
+  // 0005 storage policy scopes it like any original document.
+  let pdfUrl: string | null = null;
+  if (version.status === "executed" && version.pdf_storage_path) {
+    const { data: signed } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(version.pdf_storage_path, 60 * 60);
+    pdfUrl = signed?.signedUrl ?? null;
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -113,9 +124,26 @@ export default async function EstimateVersionPage({
           superseded version shows its signatures (if any) but offers no
           signing actions. */}
       {version.status === "executed" && (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm font-medium text-emerald-800 dark:text-emerald-300">
-          <CheckCircle2Icon className="size-5 shrink-0" />
-          Executed — signed by both parties. This document and its signatures are locked.
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+          <span className="flex items-center gap-2">
+            <CheckCircle2Icon className="size-5 shrink-0" />
+            Executed — signed by both parties. This document and its signatures are locked.
+          </span>
+          <span className="ml-auto">
+            {pdfUrl ? (
+              <a
+                href={pdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-lg border border-emerald-600/40 px-2.5 py-1 text-xs font-medium hover:bg-emerald-500/20"
+              >
+                <FileDownIcon className="size-3.5" />
+                Download PDF
+              </a>
+            ) : (
+              <GeneratePdfButton versionId={versionId} estimateId={estimateId} />
+            )}
+          </span>
         </div>
       )}
 

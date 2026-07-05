@@ -5,6 +5,7 @@ import { createClient } from "celery-node";
 const QUEUE = "celery";
 const PROCESS_DOCUMENT_TASK = "estimator_workers.tasks.process_document";
 const MATCH_MATERIALS_TASK = "estimator_workers.tasks.match_materials";
+const RENDER_CHANGE_ORDER_PDF_TASK = "estimator_workers.tasks.render_change_order_pdf";
 
 // celery-node's Client.sendTask()/Task.delay() publish fire-and-forget with
 // no way to await success or catch a connection failure -- the promise
@@ -65,4 +66,16 @@ export async function publishMatchMaterialsTask(
   companyId: string,
 ): Promise<void> {
   await publishTask(MATCH_MATERIALS_TASK, [invoiceId, companyId]);
+}
+
+// Renders the legal PDF artifact for an executed estimate version
+// (docs/v2/plans/01-change-orders-plan.md -> Phase 4). Published
+// best-effort after client signing and from the version page's manual
+// "Generate PDF" retry; a publish failure just means pdf_storage_path
+// stays null and the retry button remains available.
+export async function publishRenderChangeOrderPdfTask(
+  versionId: string,
+  companyId: string,
+): Promise<void> {
+  await publishTask(RENDER_CHANGE_ORDER_PDF_TASK, [versionId, companyId]);
 }

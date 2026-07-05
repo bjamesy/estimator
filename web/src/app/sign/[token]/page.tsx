@@ -72,7 +72,7 @@ export default async function ClientSigningPage({
   const { data: version } = await admin
     .from("estimate_versions")
     .select(
-      "id, estimate_id, version_number, status, total, pct_change_from_root, estimates(name, companies(name))",
+      "id, estimate_id, version_number, status, total, pct_change_from_root, pdf_storage_path, estimates(name, companies(name))",
     )
     .eq("id", token.estimate_version_id)
     .single();
@@ -140,13 +140,34 @@ export default async function ClientSigningPage({
   );
 
   // Fully executed: this page becomes the client's receipt, whether they
-  // arrive back via the same (now used) link or just after signing.
+  // arrive back via the same (now used) link or just after signing. If
+  // the legal PDF has been rendered, offer it for download (signed URL
+  // via the admin client -- the client has no storage identity).
   if (version.status === "executed") {
+    let pdfUrl: string | null = null;
+    if (version.pdf_storage_path) {
+      const { data: signed } = await admin.storage
+        .from("documents")
+        .createSignedUrl(version.pdf_storage_path, 60 * 60);
+      pdfUrl = signed?.signedUrl ?? null;
+    }
     return (
       <Shell>
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm font-medium text-emerald-800 dark:text-emerald-300">
-          <CheckCircle2Icon className="size-5 shrink-0" />
-          This {isRoot ? "estimate" : "change order"} has been signed by both parties.
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+          <span className="flex items-center gap-2">
+            <CheckCircle2Icon className="size-5 shrink-0" />
+            This {isRoot ? "estimate" : "change order"} has been signed by both parties.
+          </span>
+          {pdfUrl && (
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-auto rounded-lg border border-emerald-600/40 px-2.5 py-1 text-xs font-medium hover:bg-emerald-500/20"
+            >
+              Download PDF
+            </a>
+          )}
         </div>
         {review}
         <div className="grid gap-3 sm:grid-cols-2">
