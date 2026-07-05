@@ -18,7 +18,9 @@ Company
 │           └── LineItem              (1:N)
 │               └── MaterialMatch     (1:1 — links to MaterialCatalog)
 ├── Estimate                          (1:N — company-scoped; optional FK to Project)
-│   └── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
+│   ├── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
+│   └── EstimateVersion               (1:N — immutable snapshots; substrate for change orders)
+│       └── EstimateVersionLine       (1:N — frozen copy of the draft lines at snapshot time)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
@@ -246,3 +248,44 @@ EstimateLine
 A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.
 
 **Removing a line is a soft delete** (`0015_estimate_line_soft_delete.sql`). `deleteEstimateLine` sets `deleted_at` instead of dropping the row; `restoreEstimateLine` clears it. A tombstoned line is retained and shown struck-through under "Removed lines" with a Restore button, but is excluded from the estimate total and any export — both count only rows where `deleted_at is null`. Newly inserted lines are always active (`deleted_at` null).
+
+## EstimateVersion
+
+```
+EstimateVersion
+  id
+  estimate_id            FK → Estimate, RESTRICT
+  company_id             FK → Company, RESTRICT
+  parent_version_id      FK → EstimateVersion, RESTRICT, nullable — previous version; null on the original
+  version_number         int — monotonic per estimate; unique (estimate_id, version_number)
+  status                 "draft" | "pending_contractor_signature" | "pending_client_signature"
+                          | "executed" | "superseded"
+  total                  sum of non-removed line totals, frozen at snapshot time
+  pct_change_from_root   vs. the version 1 total; null on the root — >= 10 is the Ontario CPA
+                          threshold requiring documented client consent
+  contractor_signed_at   timestamptz, nullable (signing lands in change-orders Phase 3)
+  client_signed_at       timestamptz, nullable
+  created_at
+```
+
+An immutable snapshot of the estimate's active draft lines — the substrate for change orders (`docs/v2/plans/01-change-orders-plan.md`, `0016_estimate_versions.sql`). The live `Estimate`/`EstimateLine` stay the editable working draft; `snapshotEstimateVersion` (`web/src/app/actions/change-orders.ts`) freezes them into a new version. Append-only: after creation, only `status` and the signature timestamps ever change, and only forward through the lifecycle. The whole chain is `ON DELETE RESTRICT` — a signed change order is a legal artifact, same retention discipline as the `Document → Invoice → LineItem` chain. A new snapshot marks the previous version `superseded` unless it was `executed` — executed versions are never touched. A snapshot identical to the latest version is refused.
+
+## EstimateVersionLine
+
+```
+EstimateVersionLine
+  id
+  estimate_version_id     FK → EstimateVersion, RESTRICT
+  company_id              FK → Company, RESTRICT
+  source_estimate_line_id FK → EstimateLine, SET NULL — which draft line this froze; the diff key
+  source_line_item_id     FK → LineItem, SET NULL — provenance carried through from the draft line
+  description
+  quantity
+  unit_price
+  markup_percent
+  total
+  change_kind             "unchanged" | "added" | "modified" | "removed" — vs. the parent version
+  created_at
+```
+
+Lines are matched across versions by `source_estimate_line_id` (which draft line they froze), not by description. `change_kind` is computed at snapshot time against the parent version's non-removed lines; on the root version every line is `unchanged` (the root is the baseline). `removed` rows are lines that existed in the parent but not in this snapshot — carried into the new version with the parent's frozen values so a change order is self-contained, shown struck-through, and excluded from the version's `total`.

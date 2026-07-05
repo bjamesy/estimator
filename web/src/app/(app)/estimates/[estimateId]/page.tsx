@@ -1,8 +1,9 @@
-import { FolderIcon } from "lucide-react";
+import { FolderIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { addBlankEstimateLine } from "@/app/actions/estimates";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Table,
@@ -18,6 +19,15 @@ import { cn } from "@/lib/utils";
 import { EstimateLineRow } from "./estimate-line-row";
 import { HistoricalSearch } from "./historical-search";
 import { RemovedLines } from "./removed-lines";
+import { SnapshotVersionForm } from "./snapshot-version-form";
+
+const VERSION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  pending_contractor_signature: "Awaiting your signature",
+  pending_client_signature: "Awaiting client signature",
+  executed: "Executed",
+  superseded: "Superseded",
+};
 
 export default async function EstimatePage({
   params,
@@ -52,6 +62,24 @@ export default async function EstimatePage({
 
   const grandTotal = lines.reduce((sum, l) => sum + l.total, 0);
 
+  const { data: versionsData } = await supabase
+    .from("estimate_versions")
+    .select("id, version_number, status, total, pct_change_from_root, created_at")
+    .eq("estimate_id", estimateId)
+    .order("version_number", { ascending: false });
+  const versions = versionsData ?? [];
+
+  // Live CPA check: how far the *current draft* has moved from the original
+  // (version 1) total. Ontario's Consumer Protection Act requires documented
+  // client consent for increases of 10% or more, so warn while editing --
+  // before the snapshot -- not only on the frozen version.
+  const rootVersion = versions.find((v) => v.version_number === 1);
+  const draftPctFromRoot =
+    rootVersion && rootVersion.total > 0
+      ? ((grandTotal - rootVersion.total) / rootVersion.total) * 100
+      : null;
+  const draftOverCpaThreshold = draftPctFromRoot !== null && draftPctFromRoot >= 10;
+
   const addBlankLine = addBlankEstimateLine.bind(null, estimateId);
 
   return (
@@ -68,6 +96,22 @@ export default async function EstimatePage({
           </Link>
         )}
       </div>
+
+      {draftOverCpaThreshold && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+          <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="text-sm">
+            <p className="font-semibold text-amber-800 dark:text-amber-300">
+              This draft is {draftPctFromRoot.toFixed(1)}% over the original estimate
+            </p>
+            <p className="text-amber-800/90 dark:text-amber-300/90">
+              Ontario&apos;s Consumer Protection Act requires documented client consent for
+              cost increases of 10% or more. Snapshot a new version below and get it signed
+              as a change order before proceeding.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
@@ -133,6 +177,60 @@ export default async function EstimatePage({
 
         {removedLines.length > 0 && (
           <RemovedLines estimateId={estimateId} lines={removedLines} />
+        )}
+      </div>
+
+      {/* Immutable version history -- the substrate for change orders.
+          Snapshotting freezes the current draft lines; the frozen version
+          diffs itself against its parent. See
+          docs/v2/plans/01-change-orders-plan.md. */}
+      <div className="flex flex-col gap-2 border-t pt-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Versions</h2>
+          <SnapshotVersionForm
+            estimateId={estimateId}
+            nextVersionNumber={(versions[0]?.version_number ?? 0) + 1}
+          />
+        </div>
+        {versions.length > 0 ? (
+          <ul className="flex flex-col divide-y">
+            {versions.map((v) => (
+              <li key={v.id}>
+                <Link
+                  href={`/estimates/${estimateId}/versions/${v.id}`}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm hover:bg-muted/50"
+                >
+                  <span className="font-medium">Version {v.version_number}</span>
+                  <Badge variant="outline">
+                    {VERSION_STATUS_LABELS[v.status] ?? v.status}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {new Date(v.created_at).toLocaleDateString()}
+                  </span>
+                  <span className="ml-auto flex items-center gap-3">
+                    {v.pct_change_from_root !== null && (
+                      <span
+                        className={
+                          v.pct_change_from_root >= 10
+                            ? "font-medium text-amber-700 dark:text-amber-400"
+                            : "text-muted-foreground"
+                        }
+                      >
+                        {v.pct_change_from_root >= 0 ? "+" : ""}
+                        {v.pct_change_from_root.toFixed(1)}%
+                      </span>
+                    )}
+                    <span className="font-medium">${v.total.toFixed(2)}</span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No versions yet. Snapshot the estimate to freeze version 1 — the baseline any
+            future change order is measured against.
+          </p>
         )}
       </div>
 

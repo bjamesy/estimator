@@ -19,6 +19,9 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 11. `0011_estimates_project_optional.sql` — makes `estimates.project_id` nullable and changes its FK from `CASCADE` to `SET NULL`, decoupling Estimates from Projects (see `docs/architecture.md` → Open Questions → Estimate-building data flow)
 12. `0012_document_content_hash.sql` — adds `documents.content_hash` (SHA-256) with a partial unique index on `(project_id, content_hash)` for per-project upload idempotency (see `docs/data_model.md` → Document)
 13. `0013_unique_names.sql` — case-insensitive unique indexes on project names (per company) and estimate names (per project; standalone estimates form their own group via `NULLS NOT DISTINCT`)
+14. `0014_document_rejected_status.sql` — adds the `rejected` document status for successfully-processed non-purchase documents (see `docs/architecture.md` → Document Status)
+15. `0015_estimate_line_soft_delete.sql` — adds `estimate_lines.deleted_at` so removing an estimate line tombstones it (restorable) instead of hard-deleting
+16. `0016_estimate_versions.sql` — `estimate_versions` and `estimate_version_lines`: immutable estimate snapshots with per-line change tracking, the substrate for change orders (see `docs/v2/plans/01-change-orders-plan.md`)
 
 ## Applying to a Supabase project
 
@@ -35,4 +38,4 @@ Or paste each file into the Supabase Studio SQL editor in order. `SUPABASE_DB_UR
 ## Notes
 
 - `suppliers` has no `company_id` and is excluded from company-scoped RLS by design — see `docs/data_model.md` → Supplier.
-- All migrations through `0013` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.
+- All migrations through `0016` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.
