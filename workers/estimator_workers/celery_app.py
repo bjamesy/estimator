@@ -26,6 +26,10 @@ app.conf.beat_schedule = {
         "task": "estimator_workers.tasks.send_signing_reminders",
         "schedule": 3600.0,
     },
+    "credential-expiry-sweep": {
+        "task": "estimator_workers.tasks.credential_expiry_sweep",
+        "schedule": 3600.0,
+    },
 }
 
 # Explicit import rather than autodiscover_tasks(): autodiscovery is lazy

@@ -1,7 +1,7 @@
 import base64
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, TypeVar
 
 from celery import Task, chain
@@ -558,3 +558,138 @@ def send_signing_reminders() -> int:
 
     logger.info("send_signing_reminders: %d reminder(s) sent", sent)
     return sent
+
+
+# ---------------------------------------------------------------------------
+# Contractor credential verification (docs/v2/plans/02-verification-plan.md).
+
+
+@app.task(bind=True, name="estimator_workers.tasks.extract_credential", max_retries=MAX_RETRIES)
+def extract_credential(self: Task, credential_id: str, company_id: str, storage_path: str) -> None:
+    """Reads key fields (expiry especially) off an uploaded certificate.
+    Best-effort: extraction failure leaves the typed columns null for the
+    contractor to fill in by hand -- never fabricated. Only fills columns
+    that are still null, so a contractor's manual correction is never
+    overwritten by a re-run."""
+    from estimator_workers.credential_extraction import (
+        build_credential_prompt,
+        parse_credential_json,
+    )
+
+    try:
+        supabase = get_supabase()
+        credential = (
+            supabase.table("credentials")
+            .select("id, credential_type, issued_date, expiry_date, coverage_amount, provider")
+            .eq("id", credential_id)
+            .eq("company_id", company_id)
+            .single()
+            .execute()
+            .data
+        )
+
+        file_bytes = supabase.storage.from_("documents").download(storage_path)
+        raw_text = call_vision_llm(
+            file_bytes,
+            _guess_mime_type(storage_path),
+            prompt=build_credential_prompt(credential["credential_type"]),
+        )
+        parsed = parse_credential_json(raw_text)
+
+        update = {"extraction_result": parsed["raw"], "last_checked_at": "now()"}
+        for field in ("issued_date", "expiry_date", "coverage_amount", "provider"):
+            if credential.get(field) is None and parsed[field] is not None:
+                update[field] = parsed[field]
+        supabase.table("credentials").update(update).eq("id", credential_id).execute()
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            # Terminal: mark the attempt so the UI stops showing "reading
+            # certificate" forever; fields stay null for manual entry.
+            try:
+                get_supabase().table("credentials").update({"last_checked_at": "now()"}).eq(
+                    "id", credential_id
+                ).execute()
+            except Exception:
+                pass
+            raise
+        raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))
+
+
+# 30/14/1-day reminder windows; stage number = how many reminders a
+# credential should have received once inside that window.
+EXPIRY_REMINDER_STAGES = [(30, 1), (14, 2), (1, 3)]
+
+
+@app.task(name="estimator_workers.tasks.credential_expiry_sweep")
+def credential_expiry_sweep() -> dict:
+    """Beat-scheduled: flips past-expiry credentials to 'expired' and
+    sends staged 30/14/1-day reminders to company members. Each stage
+    fires exactly once per credential (expiry_reminders_sent records the
+    highest stage already sent)."""
+    supabase = get_supabase()
+    today = datetime.now(timezone.utc).date()
+
+    active = (
+        supabase.table("credentials")
+        .select("id, company_id, credential_type, expiry_date, status, expiry_reminders_sent")
+        .is_("superseded_at", "null")
+        .not_.is_("expiry_date", "null")
+        .execute()
+        .data
+    )
+
+    type_labels = {
+        "wsib": "WSIB clearance certificate",
+        "liability_insurance": "liability insurance certificate",
+        "business_registration": "business registration",
+    }
+    expired = 0
+    reminded = 0
+    for cred in active:
+        expiry = date.fromisoformat(cred["expiry_date"])
+        days_left = (expiry - today).days
+
+        if days_left < 0:
+            if cred["status"] != "expired":
+                supabase.table("credentials").update({"status": "expired"}).eq(
+                    "id", cred["id"]
+                ).execute()
+                expired += 1
+                for email in _company_member_emails(supabase, cred["company_id"]):
+                    send_email(
+                        to=email,
+                        subject=f"Expired: your {type_labels[cred['credential_type']]}",
+                        text=(
+                            f"Your {type_labels[cred['credential_type']]} expired on "
+                            f"{cred['expiry_date']}. Upload a renewed certificate:\n"
+                            f"{APP_BASE_URL}/credentials"
+                        ),
+                    )
+            continue
+
+        stage = 0
+        for threshold_days, stage_number in EXPIRY_REMINDER_STAGES:
+            if days_left <= threshold_days:
+                stage = stage_number
+        if stage > cred["expiry_reminders_sent"]:
+            for email in _company_member_emails(supabase, cred["company_id"]):
+                send_email(
+                    to=email,
+                    subject=(
+                        f"Renewal reminder: {type_labels[cred['credential_type']]} "
+                        f"expires in {days_left} day{'s' if days_left != 1 else ''}"
+                    ),
+                    text=(
+                        f"Your {type_labels[cred['credential_type']]} expires on "
+                        f"{cred['expiry_date']} ({days_left} day{'s' if days_left != 1 else ''} "
+                        f"from now). Upload a renewed certificate before it lapses:\n"
+                        f"{APP_BASE_URL}/credentials"
+                    ),
+                )
+            supabase.table("credentials").update({"expiry_reminders_sent": stage}).eq(
+                "id", cred["id"]
+            ).execute()
+            reminded += 1
+
+    logger.info("credential_expiry_sweep: %d expired, %d reminded", expired, reminded)
+    return {"expired": expired, "reminded": reminded}

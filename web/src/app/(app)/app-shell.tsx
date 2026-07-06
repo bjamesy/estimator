@@ -1,6 +1,6 @@
 "use client";
 
-import { HouseIcon, MenuIcon, SearchIcon, XIcon } from "lucide-react";
+import { HouseIcon, MenuIcon, SearchIcon, ShieldCheckIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -15,6 +15,13 @@ type Item = { id: string; name: string };
 const PRIMARY_NAV = [
   { href: "/", label: "Home", icon: HouseIcon, exact: true, shortcut: undefined },
   { href: "/search", label: "Search", icon: SearchIcon, exact: false, shortcut: "⌘K" },
+  {
+    href: "/credentials",
+    label: "Credentials",
+    icon: ShieldCheckIcon,
+    exact: false,
+    shortcut: undefined,
+  },
 ];
 
 // Shared pill styling for an active vs. inactive sidebar row.

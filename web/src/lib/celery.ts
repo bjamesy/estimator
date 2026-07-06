@@ -8,6 +8,7 @@ const MATCH_MATERIALS_TASK = "estimator_workers.tasks.match_materials";
 const RENDER_CHANGE_ORDER_PDF_TASK = "estimator_workers.tasks.render_change_order_pdf";
 const SEND_SIGNING_REQUEST_EMAIL_TASK = "estimator_workers.tasks.send_signing_request_email";
 const NOTIFY_CHANGE_ORDER_EXECUTED_TASK = "estimator_workers.tasks.notify_change_order_executed";
+const EXTRACT_CREDENTIAL_TASK = "estimator_workers.tasks.extract_credential";
 
 // celery-node's Client.sendTask()/Task.delay() publish fire-and-forget with
 // no way to await success or catch a connection failure -- the promise
@@ -107,4 +108,15 @@ export async function publishNotifyChangeOrderExecutedTask(
   companyId: string,
 ): Promise<void> {
   await publishTask(NOTIFY_CHANGE_ORDER_EXECUTED_TASK, [versionId, companyId]);
+}
+
+// Reads key fields (expiry especially) off an uploaded credential
+// certificate -- docs/v2/plans/02-verification-plan.md Phase 2. Best
+// effort: on failure the contractor enters the fields manually.
+export async function publishExtractCredentialTask(
+  credentialId: string,
+  companyId: string,
+  storagePath: string,
+): Promise<void> {
+  await publishTask(EXTRACT_CREDENTIAL_TASK, [credentialId, companyId, storagePath]);
 }

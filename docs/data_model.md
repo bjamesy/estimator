@@ -24,6 +24,7 @@ Company
 │       ├── EstimateSignature         (0-2:1 — contractor + client signatures; immutable)
 │       └── ClientSigningToken        (1:N — hashed, single-use, expiring public signing links)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
+├── Credential                        (1:N — WSIB / insurance / registration certificates on file)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
 ```
@@ -199,6 +200,29 @@ Global entity — the one deliberate exception to company scoping. A supplier li
 **As actually implemented (Phase 4):** supplier resolution on confirm is a simple case-insensitive exact-name match (`ilike`) against existing `Supplier` rows — not the LLM-based approach material matching ended up using in Phase 5. This means variant phrasings ("Hill's Home Building Centre" vs "Hills Home Building Center") will create near-duplicate `Supplier` rows rather than being recognized as the same business. Known, documented limitation — see `mvp/implementation_plan.md` → Phase 4 "Not yet tested." Applying the same LLM-matching treatment used for materials is the natural fix if this proves to be a real problem in practice.
 
 ---
+
+## Credential
+
+```
+Credential
+  id
+  company_id             FK → Company
+  credential_type        "wsib" | "liability_insurance" | "business_registration"
+  storage_path           original certificate — documents bucket, {company_id}/credentials/…
+  status                 "self_reported" | "verified" | "expired"
+  issued_date            nullable
+  expiry_date            nullable
+  coverage_amount        numeric, nullable — structured so "$2M liability" is filterable
+  provider               nullable — issuer/insurer name
+  extraction_result      jsonb, nullable — raw vision-LLM reading (kept like ExtractionResult)
+  last_checked_at        nullable — when extraction last ran (null = pending)
+  expiry_reminders_sent  int — highest reminder stage sent (0 none, 1=30d, 2=14d, 3=1d)
+  superseded_at          nullable — renewal keeps history; partial unique index enforces
+                          one ACTIVE credential per type per company
+  created_at
+```
+
+Contractor credential verification, V1 "document-on-file" (`0020_credentials.sql`, `docs/v2/plans/02-verification-plan.md`). Upload supersedes the prior active credential of that type (history retained). The worker's `extract_credential` task reuses the invoice pipeline's vision call (`call_vision_llm` now takes a `prompt` parameter) to read issued/expiry dates, provider, and coverage — filling only columns that are still null, so the contractor's manual corrections are never overwritten; an unreadable field stays null rather than fabricated. The hourly `credential_expiry_sweep` beat task flips past-expiry credentials to `expired` and emails staged 30/14/1-day renewal reminders (each stage fires once, tracked by `expiry_reminders_sent`; a corrected expiry resets the ladder). `verified` is reserved for the possible V2 independent WSIB cross-check — today status reflects submitted documents, not a guarantee, and the UI says so.
 
 ## CompanySupplier
 

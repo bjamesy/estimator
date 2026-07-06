@@ -123,7 +123,10 @@ def _convert_heic_to_jpeg(file_bytes: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def call_vision_llm(file_bytes: bytes, mime_type: str) -> str:
+# `prompt` defaults to invoice extraction; credential extraction
+# (credential_extraction.py) passes its own prompt and reuses the
+# HEIC conversion + PDF document-block handling here unchanged.
+def call_vision_llm(file_bytes: bytes, mime_type: str, prompt: str = EXTRACTION_PROMPT) -> str:
     if mime_type in _HEIC_MIME_TYPES:
         file_bytes = _convert_heic_to_jpeg(file_bytes)
         mime_type = "image/jpeg"
@@ -151,7 +154,7 @@ def call_vision_llm(file_bytes: bytes, mime_type: str) -> str:
         messages=[
             {
                 "role": "user",
-                "content": [content_block, {"type": "text", "text": EXTRACTION_PROMPT}],
+                "content": [content_block, {"type": "text", "text": prompt}],
             }
         ],
     )
