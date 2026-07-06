@@ -325,9 +325,15 @@ ClientSigningToken
   company_id           FK → Company, RESTRICT
   token_hash           SHA-256 of the raw token, unique — the raw token exists only in the
                         signing URL; a database read can never recover a usable link
+  client_email         nullable — who the link was emailed to (0019); contractor can still
+                        hand the link over manually without email
   expires_at           30 days from mint (SIGNING_TOKEN_TTL_DAYS)
   used_at              nullable — set atomically when the client signs (single-use claim)
+  reminder_sent_at     nullable — non-null marks a token minted BY the reminder sweep;
+                        excludes it from future sweeps (one reminder per signing chain)
   created_at
 ```
 
-Authorizes the no-account client signing page (`/sign/[token]`). 256-bit random tokens; validation and all data access on the public page go through the admin client — there are deliberately no anon RLS policies anywhere. Authenticated policies are select/insert/delete only (no update): a contractor can mint and revoke unused links (minting a new link deletes prior unused ones — at most one live link per version), but can't tamper with `used_at`/`expires_at` to resurrect a consumed or expired link. The signing action's status gate (`pending_client_signature` only) means a link for a version superseded mid-signing refuses calmly.
+Authorizes the no-account client signing page (`/sign/[token]`). 256-bit random tokens; validation and all data access on the public page go through the admin client — there are deliberately no anon RLS policies anywhere. Authenticated policies are select/insert/delete only (no update): a contractor can mint and revoke unused links (minting a new link deletes prior unused ones — at most one live link per version), but can't tamper with `used_at`/`expires_at` to resurrect a consumed or expired link. The signing action's status gate (`pending_client_signature` only) means a link for a version superseded mid-signing refuses calmly; superseding also deletes the unused token.
+
+**Notifications (Phase 5, `0019_notifications.sql`).** If the contractor supplies a client email at sign/mint time, the worker emails the signing link (`send_signing_request_email` — the raw URL travels as a task argument, since it exists nowhere else). On execution the worker emails every company member (`notify_change_order_executed`, resolving emails via `company_members` → auth admin). A Celery-beat sweep (`send_signing_reminders`, hourly; the worker runs with `-B`) sends one reminder per signing chain after 3 days: since raw tokens are never stored, the reminder **mints a fresh token** (Python token generation mirrors `web/src/lib/signatures.ts` exactly), revokes the old one, and emails the new link. Email transport is `workers/estimator_workers/emails.py` — Resend when `RESEND_API_KEY` is set, console-transport logging otherwise.

@@ -24,6 +24,7 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 16. `0016_estimate_versions.sql` — `estimate_versions` and `estimate_version_lines`: immutable estimate snapshots with per-line change tracking, the substrate for change orders (see `docs/v2/plans/01-change-orders-plan.md`)
 17. `0017_signatures.sql` — `estimate_signatures` (immutable, no update/delete policies) and `client_signing_tokens` (hashed, single-use, expiring) powering the dual-sign change-order lifecycle and the public `/sign/[token]` page
 18. `0018_change_order_pdf.sql` — adds `estimate_versions.pdf_storage_path` for the worker-rendered legal PDF of an executed version
+19. `0019_notifications.sql` — adds `client_email` and `reminder_sent_at` to `client_signing_tokens` for signing-link emails and the one-reminder-per-chain sweep
 
 ## Applying to a Supabase project
 
@@ -40,4 +41,4 @@ Or paste each file into the Supabase Studio SQL editor in order. `SUPABASE_DB_UR
 ## Notes
 
 - `suppliers` has no `company_id` and is excluded from company-scoped RLS by design — see `docs/data_model.md` → Supplier.
-- All migrations through `0018` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.
+- All migrations through `0019` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.

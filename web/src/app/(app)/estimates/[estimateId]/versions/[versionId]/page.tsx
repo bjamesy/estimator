@@ -112,7 +112,9 @@ export default async function EstimateVersionPage({
         </p>
       </div>
 
-      {pct !== null && pct >= 10 && <CpaCallout pct={pct} />}
+      {pct !== null && pct >= 10 && (
+        <CpaCallout pct={pct} executed={version.status === "executed"} />
+      )}
 
       <VersionTotals rootTotal={rootTotal} versionTotal={version.total} pct={pct} />
 

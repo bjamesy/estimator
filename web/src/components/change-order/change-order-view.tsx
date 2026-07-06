@@ -43,7 +43,22 @@ const CHANGE_BADGES: Record<string, { label: string; className: string } | null>
   removed: { label: "Removed", className: "border-transparent bg-muted text-muted-foreground" },
 };
 
-export function CpaCallout({ pct, forClient = false }: { pct: number; forClient?: boolean }) {
+export function CpaCallout({
+  pct,
+  forClient = false,
+  executed = false,
+}: {
+  pct: number;
+  forClient?: boolean;
+  executed?: boolean;
+}) {
+  // Post-execution the callout is a record, not a call to action --
+  // "get this signed" would be stale next to two signatures.
+  const body = executed
+    ? "Ontario's Consumer Protection Act requires documented client consent for cost increases of 10% or more over the original estimate. The signatures on this document record that consent."
+    : forClient
+      ? "Ontario's Consumer Protection Act requires your documented consent for cost increases of 10% or more over the original estimate — that is what signing this change order provides."
+      : "Ontario's Consumer Protection Act requires documented client consent for cost increases of 10% or more over the original estimate. Get this change order signed before proceeding with the work.";
   return (
     <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
       <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-400" />
@@ -51,11 +66,7 @@ export function CpaCallout({ pct, forClient = false }: { pct: number; forClient?
         <p className="font-semibold text-amber-800 dark:text-amber-300">
           {pct.toFixed(1)}% over the original estimate
         </p>
-        <p className="text-amber-800/90 dark:text-amber-300/90">
-          {forClient
-            ? "Ontario's Consumer Protection Act requires your documented consent for cost increases of 10% or more over the original estimate — that is what signing this change order provides."
-            : "Ontario's Consumer Protection Act requires documented client consent for cost increases of 10% or more over the original estimate. Get this change order signed before proceeding with the work."}
-        </p>
+        <p className="text-amber-800/90 dark:text-amber-300/90">{body}</p>
       </div>
     </div>
   );

@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -e .
 
 COPY . .
 
-CMD ["celery", "-A", "estimator_workers.celery_app", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "estimator_workers.celery_app", "worker", "-B", "--loglevel=info"]

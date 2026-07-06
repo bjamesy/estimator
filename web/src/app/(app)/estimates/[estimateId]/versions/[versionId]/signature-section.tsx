@@ -15,13 +15,14 @@ import { CONSENT_STATEMENT } from "@/lib/change-order-copy";
 // Contractor-side signing UI for a version page. Which piece renders is
 // decided by the server component from version.status -- see page.tsx.
 
-function CopyableLink({ url }: { url: string }) {
+function CopyableLink({ url, emailedTo }: { url: string; emailedTo?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm">
       <p className="font-medium text-emerald-800 dark:text-emerald-300">
-        Client signing link — send it to your client. For their security it can&apos;t
-        be shown again, only replaced.
+        {emailedTo
+          ? `Signing link emailed to ${emailedTo}. You can also send it yourself — for the client's security it can't be shown again, only replaced.`
+          : "Client signing link — send it to your client. For their security it can't be shown again, only replaced."}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <code className="min-w-0 flex-1 truncate rounded bg-background/60 px-2 py-1 text-xs">
@@ -60,7 +61,7 @@ export function SignContractorForm({
   );
 
   if (state?.signingUrl) {
-    return <CopyableLink url={state.signingUrl} />;
+    return <CopyableLink url={state.signingUrl} emailedTo={state.emailedTo} />;
   }
 
   return (
@@ -73,9 +74,20 @@ export function SignContractorForm({
           link your client signs through.
         </p>
       </div>
-      <div className="flex flex-col gap-1.5 sm:max-w-sm">
-        <Label htmlFor="signer_name">Full name</Label>
-        <Input id="signer_name" name="signer_name" required autoComplete="name" />
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="flex flex-1 flex-col gap-1.5 sm:max-w-sm">
+          <Label htmlFor="signer_name">Full name</Label>
+          <Input id="signer_name" name="signer_name" required autoComplete="name" />
+        </div>
+        <div className="flex flex-1 flex-col gap-1.5 sm:max-w-sm">
+          <Label htmlFor="client_email">Client email (optional)</Label>
+          <Input
+            id="client_email"
+            name="client_email"
+            type="email"
+            placeholder="Sends them the signing link"
+          />
+        </div>
       </div>
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" name="consent" className="mt-0.5" required />
@@ -148,9 +160,18 @@ export function SigningLinkPanel({
         </p>
       </div>
       {state?.signingUrl ? (
-        <CopyableLink url={state.signingUrl} />
+        <CopyableLink url={state.signingUrl} emailedTo={state.emailedTo} />
       ) : (
-        <form action={formAction}>
+        <form action={formAction} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex flex-col gap-1.5 sm:max-w-sm">
+            <Label htmlFor="regen_client_email">Client email (optional)</Label>
+            <Input
+              id="regen_client_email"
+              name="client_email"
+              type="email"
+              placeholder="Sends them the new link"
+            />
+          </div>
           <Button type="submit" size="sm" variant="outline" disabled={pending}>
             {pending ? "Generating..." : "Generate new signing link"}
           </Button>

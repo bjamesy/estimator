@@ -3,7 +3,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { publishRenderChangeOrderPdfTask } from "@/lib/celery";
+import {
+  publishNotifyChangeOrderExecutedTask,
+  publishRenderChangeOrderPdfTask,
+} from "@/lib/celery";
 import { hashSigningToken } from "@/lib/signatures";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -114,13 +117,20 @@ export async function signVersionAsClient(
     .eq("id", version.id)
     .eq("status", "pending_client_signature");
 
-  // Kick off the legal PDF render (Phase 4). Best-effort: the signing is
-  // already durably recorded, so a broker hiccup must not fail it -- the
-  // contractor's version page offers a manual "Generate PDF" retry.
+  // Kick off the legal PDF render (Phase 4) and the contractor
+  // notification (Phase 5). Best-effort: the signing is already durably
+  // recorded, so a broker hiccup must not fail it -- the contractor's
+  // version page offers a manual "Generate PDF" retry, and the version
+  // list shows the executed status regardless of email delivery.
   try {
     await publishRenderChangeOrderPdfTask(version.id, token.company_id);
   } catch {
     // pdf_storage_path stays null; retry surface covers it.
+  }
+  try {
+    await publishNotifyChangeOrderExecutedTask(version.id, token.company_id);
+  } catch {
+    // notification lost; the UI still shows executed.
   }
 
   // Fresh server render of the same URL now shows the executed state.

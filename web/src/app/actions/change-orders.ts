@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { publishRenderChangeOrderPdfTask } from "@/lib/celery";
+import {
+  publishRenderChangeOrderPdfTask,
+  publishSendSigningRequestEmailTask,
+} from "@/lib/celery";
 import { tryGetCurrentCompanyId } from "@/lib/company";
 import {
   generateSigningToken,
@@ -259,12 +262,20 @@ export async function snapshotEstimateVersion(
     return { error: `Failed to snapshot lines: ${linesError.message}` };
   }
 
-  // Supersede the previous version if it never reached executed.
+  // Supersede the previous version if it never reached executed, and
+  // revoke any unused signing tokens pointing at it -- the signing page's
+  // status gate already refuses them, but a dead link shouldn't linger
+  // as a live row either.
   if (latestVersion && latestVersion.status !== "executed") {
     await supabase
       .from("estimate_versions")
       .update({ status: "superseded" })
       .eq("id", latestVersion.id);
+    await supabase
+      .from("client_signing_tokens")
+      .delete()
+      .eq("estimate_version_id", latestVersion.id)
+      .is("used_at", null);
   }
 
   revalidatePath(`/estimates/${estimateId}`);
@@ -303,7 +314,8 @@ async function mintSigningToken(
   supabase: Awaited<ReturnType<typeof createClient>>,
   versionId: string,
   companyId: string,
-): Promise<{ signingUrl: string } | { error: string }> {
+  clientEmail: string | null,
+): Promise<{ signingUrl: string; emailedTo?: string } | { error: string }> {
   await supabase
     .from("client_signing_tokens")
     .delete()
@@ -315,17 +327,33 @@ async function mintSigningToken(
     estimate_version_id: versionId,
     company_id: companyId,
     token_hash: hashSigningToken(rawToken),
+    client_email: clientEmail,
     expires_at: signingTokenExpiry().toISOString(),
   });
   if (error) {
     return { error: error.message };
   }
-  return { signingUrl: await buildSigningUrl(rawToken) };
+  const signingUrl = await buildSigningUrl(rawToken);
+
+  // Email the client their link (Phase 5). Best-effort: the URL is
+  // always also returned for the contractor to copy, so a broker hiccup
+  // degrades to the manual handoff rather than losing the link.
+  let emailedTo: string | undefined;
+  if (clientEmail) {
+    try {
+      await publishSendSigningRequestEmailTask(versionId, companyId, clientEmail, signingUrl);
+      emailedTo = clientEmail;
+    } catch {
+      // fall through -- contractor still gets the copyable link
+    }
+  }
+  return { signingUrl, emailedTo };
 }
 
 type SignContractorState = {
   error: string | null;
   signingUrl?: string;
+  emailedTo?: string;
 };
 
 // Contractor signs a draft version: records the signature (immutable --
@@ -342,6 +370,7 @@ export async function signVersionAsContractor(
   formData: FormData,
 ): Promise<SignContractorState> {
   const signerName = (formData.get("signer_name") as string)?.trim();
+  const clientEmail = (formData.get("client_email") as string)?.trim() || null;
   const consent = formData.get("consent") === "on";
   if (!signerName) {
     return { error: "Type your full name to sign." };
@@ -401,7 +430,7 @@ export async function signVersionAsContractor(
     return { error: statusError.message };
   }
 
-  const minted = await mintSigningToken(supabase, versionId, companyId);
+  const minted = await mintSigningToken(supabase, versionId, companyId, clientEmail);
   // Deliberately NO revalidatePath here: revalidating this page (or a
   // parent segment) re-renders the server tree, which swaps this form
   // out for SigningLinkPanel and unmounts the client state holding the
@@ -411,7 +440,7 @@ export async function signVersionAsContractor(
   if ("error" in minted) {
     return { error: `Signed, but couldn't create the client link: ${minted.error}` };
   }
-  return { error: null, signingUrl: minted.signingUrl };
+  return { error: null, signingUrl: minted.signingUrl, emailedTo: minted.emailedTo };
 }
 
 // Regenerates the client signing link for a version awaiting the client
@@ -421,8 +450,10 @@ export async function regenerateSigningLink(
   versionId: string,
   estimateId: string,
   _prevState: unknown,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<SignContractorState> {
+  const clientEmail = (formData.get("client_email") as string)?.trim() || null;
+
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
   if (companyError !== null) {
     return { error: companyError };
@@ -443,11 +474,11 @@ export async function regenerateSigningLink(
     return { error: "This version isn't awaiting a client signature." };
   }
 
-  const minted = await mintSigningToken(supabase, versionId, companyId);
+  const minted = await mintSigningToken(supabase, versionId, companyId, clientEmail);
   if ("error" in minted) {
     return { error: minted.error };
   }
-  return { error: null, signingUrl: minted.signingUrl };
+  return { error: null, signingUrl: minted.signingUrl, emailedTo: minted.emailedTo };
 }
 
 // Manual (re-)publish of the legal PDF render for an executed version --

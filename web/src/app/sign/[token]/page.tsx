@@ -133,7 +133,9 @@ export default async function ClientSigningPage({
           From {companyName} · Version {version.version_number}
         </p>
       </div>
-      {pct !== null && pct >= 10 && <CpaCallout pct={pct} forClient />}
+      {pct !== null && pct >= 10 && (
+        <CpaCallout pct={pct} forClient executed={version.status === "executed"} />
+      )}
       <VersionTotals rootTotal={rootTotal} versionTotal={version.total} pct={pct} />
       <VersionLinesTable lines={lines} versionTotal={version.total} />
     </>

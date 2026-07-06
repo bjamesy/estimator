@@ -1,4 +1,7 @@
 import base64
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Callable, TypeVar
 
 from celery import Task, chain
@@ -7,6 +10,8 @@ from postgrest.exceptions import APIError
 
 from estimator_workers.celery_app import app
 from estimator_workers.change_order_pdf import ChangeOrderData, render_change_order_pdf
+from estimator_workers.config import APP_BASE_URL
+from estimator_workers.emails import send_email
 from estimator_workers.events import finish_event, mark_document_failed, start_event
 from estimator_workers.extraction import (
     SUPPORTED_MIME_TYPES,
@@ -355,3 +360,201 @@ def render_change_order_pdf_task(self: Task, version_id: str, company_id: str) -
         if self.request.retries >= self.max_retries:
             raise
         raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))
+
+
+# ---------------------------------------------------------------------------
+# Change-order notifications (docs/v2/plans/01-change-orders-plan.md ->
+# Phase 5). Email transport lives in emails.py (Resend when configured,
+# console transport otherwise).
+
+
+def _estimate_context(supabase, version_id: str) -> dict:
+    """Names + numbers most notification bodies need."""
+    version = (
+        supabase.table("estimate_versions")
+        .select("id, estimate_id, version_number, status, total")
+        .eq("id", version_id)
+        .single()
+        .execute()
+        .data
+    )
+    estimate = (
+        supabase.table("estimates")
+        .select("name, companies(name)")
+        .eq("id", version["estimate_id"])
+        .single()
+        .execute()
+        .data
+    )
+    return {
+        "version": version,
+        "estimate_name": estimate["name"],
+        "company_name": (estimate.get("companies") or {}).get("name", "Your contractor"),
+    }
+
+
+def _company_member_emails(supabase, company_id: str) -> list[str]:
+    members = (
+        supabase.table("company_members")
+        .select("user_id")
+        .eq("company_id", company_id)
+        .execute()
+        .data
+    )
+    emails = []
+    for member in members:
+        try:
+            user = supabase.auth.admin.get_user_by_id(member["user_id"]).user
+            if user and user.email:
+                emails.append(user.email)
+        except Exception:
+            logger.warning("Couldn't resolve email for user %s", member["user_id"])
+    return emails
+
+
+@app.task(bind=True, name="estimator_workers.tasks.send_signing_request_email", max_retries=MAX_RETRIES)
+def send_signing_request_email(
+    self: Task, version_id: str, company_id: str, client_email: str, signing_url: str
+) -> None:
+    """Emails the client their signing link. The raw signing URL travels
+    as a task argument because it exists nowhere else -- the database
+    stores only the token's hash."""
+    try:
+        supabase = get_supabase()
+        ctx = _estimate_context(supabase, version_id)
+        version = ctx["version"]
+        kind = "estimate" if version["version_number"] == 1 else "change order"
+        send_email(
+            to=client_email,
+            subject=f"{ctx['company_name']} sent you a {kind} to sign",
+            text=(
+                f"{ctx['company_name']} has sent you a {kind} for "
+                f'"{ctx["estimate_name"]}" (version {version["version_number"]}, '
+                f"total ${version['total']:,.2f}) to review and sign.\n\n"
+                f"Review and sign here:\n{signing_url}\n\n"
+                f"This link is unique to you and can be used once. If it expires, "
+                f"ask {ctx['company_name']} to send a new one."
+            ),
+        )
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            raise
+        raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))
+
+
+@app.task(bind=True, name="estimator_workers.tasks.notify_change_order_executed", max_retries=MAX_RETRIES)
+def notify_change_order_executed(self: Task, version_id: str, company_id: str) -> None:
+    """Tells the contractor (every company member) that the client signed."""
+    try:
+        supabase = get_supabase()
+        ctx = _estimate_context(supabase, version_id)
+        version = ctx["version"]
+        client = (
+            supabase.table("estimate_signatures")
+            .select("signer_name")
+            .eq("estimate_version_id", version_id)
+            .eq("signer_role", "client")
+            .maybe_single()
+            .execute()
+        )
+        client_name = client.data["signer_name"] if client and client.data else "The client"
+        for email in _company_member_emails(supabase, company_id):
+            send_email(
+                to=email,
+                subject=f"Signed: {ctx['estimate_name']} (version {version['version_number']})",
+                text=(
+                    f"{client_name} has signed \"{ctx['estimate_name']}\" version "
+                    f"{version['version_number']} (total ${version['total']:,.2f}).\n\n"
+                    f"The change order is now executed. The signed PDF is available "
+                    f"on the version page:\n"
+                    f"{APP_BASE_URL}/estimates/{version['estimate_id']}/versions/{version_id}"
+                ),
+            )
+    except Exception as exc:
+        if self.request.retries >= self.max_retries:
+            raise
+        raise self.retry(exc=exc, countdown=RETRY_BACKOFF_SECONDS * (self.request.retries + 1))
+
+
+REMINDER_AFTER_DAYS = 3
+SIGNING_TOKEN_TTL_DAYS = 30  # keep in sync with web/src/lib/signatures.ts
+
+
+def _generate_token_pair() -> tuple[str, str]:
+    """(raw_token, token_hash) matching web/src/lib/signatures.ts exactly:
+    32 random bytes -> base64url (no padding); SHA-256 hex of that string."""
+    raw = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    return raw, hashlib.sha256(raw.encode()).hexdigest()
+
+
+@app.task(name="estimator_workers.tasks.send_signing_reminders")
+def send_signing_reminders() -> int:
+    """Beat-scheduled sweep: clients who were emailed a signing link
+    REMINDER_AFTER_DAYS ago and haven't signed get one reminder.
+
+    Raw tokens are never stored, so the original link can't be resent --
+    the sweep mints a fresh token (same client_email), revokes the old
+    one, and emails the new link. The fresh row carries reminder_sent_at,
+    which excludes it from future sweeps: one reminder per signing chain.
+    Returns the number of reminders sent (visible in worker logs)."""
+    supabase = get_supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=REMINDER_AFTER_DAYS)).isoformat()
+
+    stale = (
+        supabase.table("client_signing_tokens")
+        .select("id, estimate_version_id, company_id, client_email, created_at")
+        .is_("used_at", "null")
+        .is_("reminder_sent_at", "null")
+        .not_.is_("client_email", "null")
+        .lt("created_at", cutoff)
+        .execute()
+        .data
+    )
+
+    sent = 0
+    for token in stale:
+        version = (
+            supabase.table("estimate_versions")
+            .select("id, status")
+            .eq("id", token["estimate_version_id"])
+            .single()
+            .execute()
+            .data
+        )
+        if version["status"] != "pending_client_signature":
+            # Superseded or executed since -- nothing to remind; drop the
+            # dead token like the supersede path does.
+            supabase.table("client_signing_tokens").delete().eq("id", token["id"]).execute()
+            continue
+
+        raw, token_hash = _generate_token_pair()
+        now = datetime.now(timezone.utc)
+        supabase.table("client_signing_tokens").insert(
+            {
+                "estimate_version_id": token["estimate_version_id"],
+                "company_id": token["company_id"],
+                "token_hash": token_hash,
+                "client_email": token["client_email"],
+                "expires_at": (now + timedelta(days=SIGNING_TOKEN_TTL_DAYS)).isoformat(),
+                "reminder_sent_at": now.isoformat(),
+            }
+        ).execute()
+        supabase.table("client_signing_tokens").delete().eq("id", token["id"]).execute()
+
+        ctx = _estimate_context(supabase, token["estimate_version_id"])
+        kind = "estimate" if ctx["version"]["version_number"] == 1 else "change order"
+        send_email(
+            to=token["client_email"],
+            subject=f"Reminder: a {kind} from {ctx['company_name']} is waiting for your signature",
+            text=(
+                f"{ctx['company_name']} is still waiting for your signature on "
+                f"\"{ctx['estimate_name']}\" (version {ctx['version']['version_number']}, "
+                f"total ${ctx['version']['total']:,.2f}).\n\n"
+                f"Review and sign here (this replaces the earlier link):\n"
+                f"{APP_BASE_URL}/sign/{raw}\n"
+            ),
+        )
+        sent += 1
+
+    logger.info("send_signing_reminders: %d reminder(s) sent", sent)
+    return sent
