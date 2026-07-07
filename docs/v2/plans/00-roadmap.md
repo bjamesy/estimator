@@ -4,15 +4,31 @@ Derived from the specs in `docs/v2/`. This roadmap covers only the **in-focus**
 features. Marketplace (`03`) and Project Templates (`04`) are **backlogged as the
 final two priorities** and have no implementation plan yet.
 
+## Status (2026-07-07)
+
+All three in-focus features are **implemented and verified end-to-end** against the
+live stack (migrations `0016`–`0021`, branch `v2/change-orders`):
+
+- **Change Orders**: all 5 phases — versioning, CPA 10% flagging, dual signatures with
+  tokenized client signing, worker-rendered PDF (placeholder legal template pending
+  lawyer review), and email notifications (Resend; console transport until
+  `RESEND_API_KEY` is set).
+- **Contractor Verification**: V1 document-on-file complete (upload, vision extraction,
+  `/credentials` page, 30/14/1-day expiry reminders + auto-expire). The V2 WSIB
+  cross-check (plan Phase 5) remains an open spike.
+- **Vendor Price Check**: complete per spec option (a) — on-demand checks, allowlisted
+  vendors, `price_verified_at` audit stamp carried into version snapshots and PDFs.
+  Option (b) (periodic re-checks while pending) deferred.
+
 ## Priority order
 
-| # | Feature | Spec | Plan |
-|---|---------|------|------|
-| 1 | Change Order & Compliance Documents | `01-change-orders-compliance.md` | `plans/01-change-orders-plan.md` |
-| 2 | Contractor Verification | `02-contractor-verification.md` | `plans/02-verification-plan.md` |
-| 3 | Vendor Price Verification | `05-vendor-price-check.md` | `plans/05-vendor-price-check-plan.md` |
-| — | Marketplace | `03-marketplace.md` | *backlogged* |
-| — | Project Templates | `04-project-templates.md` | *backlogged* |
+| # | Feature | Spec | Plan | Status |
+|---|---------|------|------|--------|
+| 1 | Change Order & Compliance Documents | `01-change-orders-compliance.md` | `plans/01-change-orders-plan.md` | ✅ shipped |
+| 2 | Contractor Verification | `02-contractor-verification.md` | `plans/02-verification-plan.md` | ✅ V1 shipped |
+| 3 | Vendor Price Verification | `05-vendor-price-check.md` | `plans/05-vendor-price-check-plan.md` | ✅ shipped |
+| — | Marketplace | `03-marketplace.md` | *backlogged* | — |
+| — | Project Templates | `04-project-templates.md` | *backlogged* | — |
 
 Change Orders is first because it is the legal wedge **and** because it builds three
 foundations the other two reuse:
