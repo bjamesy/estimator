@@ -26,6 +26,7 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 18. `0018_change_order_pdf.sql` — adds `estimate_versions.pdf_storage_path` for the worker-rendered legal PDF of an executed version
 19. `0019_notifications.sql` — adds `client_email` and `reminder_sent_at` to `client_signing_tokens` for signing-link emails and the one-reminder-per-chain sweep
 20. `0020_credentials.sql` — `credentials` table (WSIB / liability insurance / business registration certificates on file, with extraction, expiry tracking, and supersede-on-renewal)
+21. `0021_vendor_price_check.sql` — `vendor_price_checks` history table plus `vendor_product_url`/`price_verified_at` on estimate lines (and `price_verified_at` on version lines) for vendor price spot-checks
 
 ## Applying to a Supabase project
 
@@ -42,4 +43,4 @@ Or paste each file into the Supabase Studio SQL editor in order. `SUPABASE_DB_UR
 ## Notes
 
 - `suppliers` has no `company_id` and is excluded from company-scoped RLS by design — see `docs/data_model.md` → Supplier.
-- All migrations through `0020` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.
+- All migrations through `0021` have been applied to and verified against a live Supabase project. Any new migration should be applied the same way and added to the list above.

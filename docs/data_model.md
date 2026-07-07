@@ -268,12 +268,32 @@ EstimateLine
   markup_percent        default 0
   total                 quantity * unit_price * (1 + markup_percent / 100), recalculated on edit
   deleted_at            timestamptz, nullable — non-null tombstones the line (removed but restorable)
+  vendor_product_url    text, nullable — saved vendor product page for price spot-checks (0021)
+  price_verified_at     timestamptz, nullable — last time a check CONFIRMED (or the contractor
+                         applied) the vendor's price; carried into version snapshots and the PDF
   created_at
 ```
 
 A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.
 
 **Removing a line is a soft delete** (`0015_estimate_line_soft_delete.sql`). `deleteEstimateLine` sets `deleted_at` instead of dropping the row; `restoreEstimateLine` clears it. A tombstoned line is retained and shown struck-through under "Removed lines" with a Restore button, but is excluded from the estimate total and any export — both count only rows where `deleted_at is null`. Newly inserted lines are always active (`deleted_at` null).
+
+## VendorPriceCheck
+
+```
+VendorPriceCheck
+  id
+  estimate_line_id     FK → EstimateLine, CASCADE
+  company_id           FK → Company
+  vendor_product_url   URL as fetched — re-checking is a pure re-fetch, no matching logic
+  estimate_price       the line's unit_price at check time (comparison stays reproducible)
+  fetched_price        nullable — null when fetch/extraction failed
+  outcome              "confirmed" | "changed" | "unverifiable"
+  checked_at
+  created_at
+```
+
+Vendor price spot-checks (`0021_vendor_price_check.sql`, `docs/v2/plans/05-vendor-price-check-plan.md`). Append-only history written only by the worker's `check_vendor_price` task (select-only RLS for authenticated); the latest row per line is the current state. One saved URL per line, host-allowlisted on both sides (`web/src/lib/vendors.ts` ↔ `workers/estimator_workers/vendor_price.py` — the allowlist is the SSRF guard; arbitrary URLs are never fetched). Extraction reads standard structured data (JSON-LD Product offers → price meta tags → itemprop); "materially unchanged" means within 1% or a cent. A `changed` outcome **never** edits the line — the contractor's explicit "Use $X" action (`applyCheckedPrice`) is the only path a fetched price reaches the estimate. A `confirmed` check (or an applied price) stamps `estimate_lines.price_verified_at`, which snapshots carry into `estimate_version_lines` and the change-order PDF renders as "(price verified YYYY-MM-DD)" — the tie into the compliance audit trail. Checks run on demand (spec option (a)); re-checking pending unsigned versions periodically is the deferred option (b).
 
 ## EstimateVersion
 

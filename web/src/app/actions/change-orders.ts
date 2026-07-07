@@ -31,6 +31,7 @@ type DraftLine = {
   unit_price: number;
   markup_percent: number;
   total: number;
+  price_verified_at: string | null;
 };
 
 type VersionLine = {
@@ -41,6 +42,7 @@ type VersionLine = {
   unit_price: number;
   markup_percent: number;
   total: number;
+  price_verified_at: string | null;
   change_kind: string;
 };
 
@@ -114,7 +116,9 @@ export async function snapshotEstimateVersion(
   // version had them.
   const { data: draftData } = await supabase
     .from("estimate_lines")
-    .select("id, source_line_item_id, description, quantity, unit_price, markup_percent, total")
+    .select(
+      "id, source_line_item_id, description, quantity, unit_price, markup_percent, total, price_verified_at",
+    )
     .eq("estimate_id", estimateId)
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
@@ -140,7 +144,7 @@ export async function snapshotEstimateVersion(
     const { data: parentData } = await supabase
       .from("estimate_version_lines")
       .select(
-        "source_estimate_line_id, source_line_item_id, description, quantity, unit_price, markup_percent, total, change_kind",
+        "source_estimate_line_id, source_line_item_id, description, quantity, unit_price, markup_percent, total, price_verified_at, change_kind",
       )
       .eq("estimate_version_id", latestVersion.id)
       .neq("change_kind", "removed")
@@ -175,6 +179,9 @@ export async function snapshotEstimateVersion(
       unit_price: draft.unit_price,
       markup_percent: draft.markup_percent,
       total: draft.total,
+      // "Price verified on [date]" stamp travels with the frozen line
+      // into the version and its PDF (vendor price check audit trail).
+      price_verified_at: draft.price_verified_at,
       change_kind,
     });
   }
@@ -194,6 +201,7 @@ export async function snapshotEstimateVersion(
         unit_price: parent.unit_price,
         markup_percent: parent.markup_percent,
         total: parent.total,
+        price_verified_at: parent.price_verified_at,
         change_kind: "removed",
       });
     }

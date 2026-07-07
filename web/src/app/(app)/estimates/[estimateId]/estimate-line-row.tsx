@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TableCell, TableRow } from "@/components/ui/table";
 
+import { PriceCheckStrip, type PriceCheck } from "./price-check-strip";
+
 type EstimateLine = {
   id: string;
   description: string;
@@ -14,14 +16,18 @@ type EstimateLine = {
   unit_price: number;
   markup_percent: number;
   total: number;
+  vendor_product_url: string | null;
+  price_verified_at: string | null;
 };
 
 export function EstimateLineRow({
   line,
   estimateId,
+  latestPriceCheck,
 }: {
   line: EstimateLine;
   estimateId: string;
+  latestPriceCheck: PriceCheck | null;
 }) {
   const updateAction = updateEstimateLine.bind(null, line.id, estimateId);
   const [state, formAction, pending] = useActionState(updateAction, null);
@@ -68,6 +74,13 @@ export function EstimateLineRow({
           </div>
         </form>
         {state?.error && <p className="px-2 pb-2 text-sm text-destructive">{state.error}</p>}
+        <PriceCheckStrip
+          lineId={line.id}
+          estimateId={estimateId}
+          vendorUrl={line.vendor_product_url}
+          priceVerifiedAt={line.price_verified_at}
+          latestCheck={latestPriceCheck}
+        />
       </TableCell>
     </TableRow>
   );

@@ -294,7 +294,10 @@ def render_change_order_pdf_task(self: Task, version_id: str, company_id: str) -
 
         lines = (
             supabase.table("estimate_version_lines")
-            .select("description, quantity, unit_price, markup_percent, total, change_kind, created_at")
+            .select(
+                "description, quantity, unit_price, markup_percent, total, change_kind, "
+                "price_verified_at, created_at"
+            )
             .eq("estimate_version_id", version_id)
             .order("created_at")
             .execute()
@@ -693,3 +696,69 @@ def credential_expiry_sweep() -> dict:
 
     logger.info("credential_expiry_sweep: %d expired, %d reminded", expired, reminded)
     return {"expired": expired, "reminded": reminded}
+
+
+# ---------------------------------------------------------------------------
+# Vendor price verification (docs/v2/plans/05-vendor-price-check-plan.md).
+
+
+@app.task(name="estimator_workers.tasks.check_vendor_price")
+def check_vendor_price(estimate_line_id: str, company_id: str) -> str:
+    """Fetches the line's saved vendor product URL and records what the
+    page currently says. NEVER changes the line's price -- 'changed' is a
+    flag for the contractor to act on. No Celery retries: a blocked or
+    broken vendor page fails the same way every time, so one attempt is
+    recorded as 'unverifiable' and the contractor can re-check on demand.
+    Returns the outcome (visible in worker logs)."""
+    from estimator_workers.vendor_price import (
+        PriceCheckFailure,
+        extract_price,
+        fetch_page,
+        prices_match,
+    )
+
+    supabase = get_supabase()
+    line = (
+        supabase.table("estimate_lines")
+        .select("id, unit_price, vendor_product_url")
+        .eq("id", estimate_line_id)
+        .eq("company_id", company_id)
+        .single()
+        .execute()
+        .data
+    )
+    url = line.get("vendor_product_url")
+    if not url:
+        logger.info("Line %s has no vendor URL; nothing to check.", estimate_line_id)
+        return "skipped"
+
+    estimate_price = float(line["unit_price"])
+    fetched_price: float | None = None
+    try:
+        fetched_price = extract_price(fetch_page(url))
+        outcome = "confirmed" if prices_match(estimate_price, fetched_price) else "changed"
+    except PriceCheckFailure as exc:
+        logger.info("Price check unverifiable for line %s: %s", estimate_line_id, exc)
+        outcome = "unverifiable"
+
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("vendor_price_checks").insert(
+        {
+            "estimate_line_id": estimate_line_id,
+            "company_id": company_id,
+            "vendor_product_url": url,
+            "estimate_price": estimate_price,
+            "fetched_price": fetched_price,
+            "outcome": outcome,
+            "checked_at": now,
+        }
+    ).execute()
+
+    # Only a CONFIRMED check stamps the line -- "verified" means the
+    # vendor page agreed with the price the estimate is using.
+    if outcome == "confirmed":
+        supabase.table("estimate_lines").update({"price_verified_at": now}).eq(
+            "id", estimate_line_id
+        ).execute()
+
+    return outcome

@@ -51,7 +51,9 @@ export default async function EstimatePage({
 
   const { data: allLines } = await supabase
     .from("estimate_lines")
-    .select("id, description, quantity, unit_price, markup_percent, total, deleted_at")
+    .select(
+      "id, description, quantity, unit_price, markup_percent, total, deleted_at, vendor_product_url, price_verified_at",
+    )
     .eq("estimate_id", estimateId)
     .order("created_at", { ascending: true });
 
@@ -61,6 +63,27 @@ export default async function EstimatePage({
   const removedLines = (allLines ?? []).filter((l) => l.deleted_at !== null);
 
   const grandTotal = lines.reduce((sum, l) => sum + l.total, 0);
+
+  // Latest vendor price check per active line (append-only history --
+  // newest row wins). See docs/v2/plans/05-vendor-price-check-plan.md.
+  const lineIds = lines.map((l) => l.id);
+  const { data: checksData } =
+    lineIds.length > 0
+      ? await supabase
+          .from("vendor_price_checks")
+          .select("estimate_line_id, outcome, fetched_price, estimate_price, checked_at")
+          .in("estimate_line_id", lineIds)
+          .order("checked_at", { ascending: false })
+      : { data: [] };
+  const latestCheckByLine = new Map<
+    string,
+    { outcome: string; fetched_price: number | null; estimate_price: number; checked_at: string }
+  >();
+  for (const check of checksData ?? []) {
+    if (!latestCheckByLine.has(check.estimate_line_id)) {
+      latestCheckByLine.set(check.estimate_line_id, check);
+    }
+  }
 
   const { data: versionsData } = await supabase
     .from("estimate_versions")
@@ -159,10 +182,12 @@ export default async function EstimatePage({
                     // defaultValue-based inputs below need a remount to
                     // pick up fresh server data without React warning
                     // about changing an uncontrolled input's default value
-                    // after the fact.
-                    key={`${line.id}-${line.total}`}
+                    // after the fact. vendor_product_url keys the same way
+                    // so the price-check strip's URL input follows suit.
+                    key={`${line.id}-${line.total}-${line.vendor_product_url ?? ""}`}
                     line={line}
                     estimateId={estimateId}
+                    latestPriceCheck={latestCheckByLine.get(line.id) ?? null}
                   />
                 ))}
               </TableBody>

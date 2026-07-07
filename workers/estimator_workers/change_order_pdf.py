@@ -163,7 +163,14 @@ def render_change_order_pdf(data: ChangeOrderData) -> bytes:
             row = table.row()
             if removed:
                 pdf.set_text_color(150, 150, 150)
-            row.cell(_latin1(line["description"]))
+            # Vendor price-check audit stamp (docs/v2/plans/
+            # 05-vendor-price-check-plan.md): a line whose price was
+            # confirmed against the vendor's live product page carries
+            # the verification date into the legal document.
+            description = line["description"]
+            if line.get("price_verified_at"):
+                description += f" (price verified {line['price_verified_at'][:10]})"
+            row.cell(_latin1(description))
             row.cell(f"{line['quantity']:g}")
             row.cell(_money(line["unit_price"]))
             row.cell(f"{line['markup_percent']:g}%")

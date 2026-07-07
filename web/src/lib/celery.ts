@@ -9,6 +9,7 @@ const RENDER_CHANGE_ORDER_PDF_TASK = "estimator_workers.tasks.render_change_orde
 const SEND_SIGNING_REQUEST_EMAIL_TASK = "estimator_workers.tasks.send_signing_request_email";
 const NOTIFY_CHANGE_ORDER_EXECUTED_TASK = "estimator_workers.tasks.notify_change_order_executed";
 const EXTRACT_CREDENTIAL_TASK = "estimator_workers.tasks.extract_credential";
+const CHECK_VENDOR_PRICE_TASK = "estimator_workers.tasks.check_vendor_price";
 
 // celery-node's Client.sendTask()/Task.delay() publish fire-and-forget with
 // no way to await success or catch a connection failure -- the promise
@@ -119,4 +120,14 @@ export async function publishExtractCredentialTask(
   storagePath: string,
 ): Promise<void> {
   await publishTask(EXTRACT_CREDENTIAL_TASK, [credentialId, companyId, storagePath]);
+}
+
+// Spot-checks one estimate line's saved vendor product URL against the
+// page's current listed price -- docs/v2/plans/05-vendor-price-check-plan.md.
+// The worker records the outcome; it never edits the line's price.
+export async function publishCheckVendorPriceTask(
+  estimateLineId: string,
+  companyId: string,
+): Promise<void> {
+  await publishTask(CHECK_VENDOR_PRICE_TASK, [estimateLineId, companyId]);
 }
