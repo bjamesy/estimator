@@ -1,6 +1,6 @@
 "use client";
 
-import { PencilIcon, XIcon } from "lucide-react";
+import { PencilIcon } from "lucide-react";
 import { useActionState, useRef, useState } from "react";
 
 import { updateCredentialFields, uploadCredential } from "@/app/actions/credentials";
@@ -8,7 +8,7 @@ import type { CredentialType } from "@/lib/credential-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { MobileSheet } from "@/components/ui/mobile-sheet";
 
 export type Credential = {
   id: string;
@@ -105,50 +105,31 @@ function FieldsForm({ credential }: { credential: Credential }) {
       // extraction lands (same keying idea as estimate line rows).
       key={`${credential.id}-${credential.last_checked_at}`}
     >
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={`issued-${credential.id}`} className="text-xs">
-          Issued
-        </Label>
+      {/* Nested label, no id/htmlFor -- this form renders twice at once
+          (desktop copy stays mounted-but-hidden below md while the mobile
+          sheet's copy is open), so a shared id would collide and break
+          label association; nesting sidesteps that entirely. */}
+      <label className="flex flex-col gap-1 text-xs">
+        Issued
+        <Input name="issued_date" type="date" defaultValue={credential.issued_date ?? ""} />
+      </label>
+      <label className="flex flex-col gap-1 text-xs">
+        Expires
+        <Input name="expiry_date" type="date" defaultValue={credential.expiry_date ?? ""} />
+      </label>
+      <label className="flex flex-col gap-1 text-xs">
+        Provider
+        <Input name="provider" defaultValue={credential.provider ?? ""} />
+      </label>
+      <label className="flex flex-col gap-1 text-xs">
+        Coverage ($)
         <Input
-          id={`issued-${credential.id}`}
-          name="issued_date"
-          type="date"
-          defaultValue={credential.issued_date ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={`expiry-${credential.id}`} className="text-xs">
-          Expires
-        </Label>
-        <Input
-          id={`expiry-${credential.id}`}
-          name="expiry_date"
-          type="date"
-          defaultValue={credential.expiry_date ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={`provider-${credential.id}`} className="text-xs">
-          Provider
-        </Label>
-        <Input
-          id={`provider-${credential.id}`}
-          name="provider"
-          defaultValue={credential.provider ?? ""}
-        />
-      </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={`coverage-${credential.id}`} className="text-xs">
-          Coverage ($)
-        </Label>
-        <Input
-          id={`coverage-${credential.id}`}
           name="coverage_amount"
           type="number"
           step="any"
           defaultValue={credential.coverage_amount ?? ""}
         />
-      </div>
+      </label>
       <Button type="submit" size="sm" variant="outline" disabled={pending}>
         {pending ? "Saving..." : "Save"}
       </Button>
@@ -217,27 +198,9 @@ export function CredentialCard({
               Edit details
             </Button>
           </div>
-          {editOpen && (
-            <div className="fixed inset-0 z-50 md:hidden">
-              <div className="absolute inset-0 bg-black/50" onClick={() => setEditOpen(false)} />
-              <div className="absolute inset-x-0 bottom-0 flex max-h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg">
-                <div className="flex items-center justify-between border-b p-2 pl-4">
-                  <span className="text-sm font-semibold">{title}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setEditOpen(false)}
-                  >
-                    <XIcon className="size-4" />
-                  </Button>
-                </div>
-                <div className="overflow-y-auto p-4">
-                  <FieldsForm credential={credential} />
-                </div>
-              </div>
-            </div>
-          )}
+          <MobileSheet open={editOpen} onClose={() => setEditOpen(false)} title={title}>
+            <FieldsForm credential={credential} />
+          </MobileSheet>
         </>
       )}
       {!credential && (
