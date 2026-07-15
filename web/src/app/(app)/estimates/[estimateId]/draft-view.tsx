@@ -61,7 +61,14 @@ export function DraftView({
                   onClick={() => onSelectLine(line.id)}
                   aria-current={active ? "true" : undefined}
                   className={cn(
-                    "flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 border-l-2 px-4 py-3 text-left transition-colors",
+                    // Below sm, description and qty/total deterministically
+                    // stack on their own lines instead of relying on
+                    // flex-wrap: a lone wrapped item doesn't honor
+                    // justify-between, so whether the total ended up
+                    // right-aligned (fits on one line) or left-aligned
+                    // (wraps alone) depended on description length --
+                    // inconsistent and looked broken row to row.
+                    "flex w-full flex-col gap-1 border-l-2 px-4 py-3 text-left transition-colors sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-1",
                     active
                       ? "border-l-primary bg-accent"
                       : "border-l-transparent hover:border-l-primary/40 hover:bg-background/60",
@@ -82,7 +89,7 @@ export function DraftView({
                     )}
                     <span className="truncate">{line.description}</span>
                   </span>
-                  <span className="flex shrink-0 items-center gap-3 text-sm text-muted-foreground">
+                  <span className="flex shrink-0 items-center gap-3 self-end text-sm text-muted-foreground sm:self-auto">
                     <span>
                       {line.quantity} × ${line.unit_price.toFixed(2)}
                       {line.markup_percent > 0 && ` +${line.markup_percent}%`}
