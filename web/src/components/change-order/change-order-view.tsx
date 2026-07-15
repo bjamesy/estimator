@@ -118,39 +118,41 @@ export function VersionLinesTable({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Description</TableHead>
-            <TableHead className="text-right">Qty</TableHead>
-            <TableHead className="text-right">Unit price</TableHead>
-            <TableHead className="text-right">Markup %</TableHead>
-            <TableHead className="text-right">Total</TableHead>
-            <TableHead>Change</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {lines.map((line) => {
-            const removed = line.change_kind === "removed";
-            const badge = CHANGE_BADGES[line.change_kind];
-            return (
-              <TableRow
-                key={line.id}
-                className={cn(removed && "text-muted-foreground line-through opacity-70")}
-              >
-                <TableCell>{line.description}</TableCell>
-                <TableCell className="text-right">{line.quantity}</TableCell>
-                <TableCell className="text-right">${line.unit_price.toFixed(2)}</TableCell>
-                <TableCell className="text-right">{line.markup_percent}%</TableCell>
-                <TableCell className="text-right">${line.total.toFixed(2)}</TableCell>
-                <TableCell>
-                  {badge && <Badge className={badge.className}>{badge.label}</Badge>}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Description</TableHead>
+              <TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Unit price</TableHead>
+              <TableHead className="text-right">Markup %</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead>Change</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {lines.map((line) => {
+              const removed = line.change_kind === "removed";
+              const badge = CHANGE_BADGES[line.change_kind];
+              return (
+                <TableRow
+                  key={line.id}
+                  className={cn(removed && "text-muted-foreground line-through opacity-70")}
+                >
+                  <TableCell>{line.description}</TableCell>
+                  <TableCell className="text-right">{line.quantity}</TableCell>
+                  <TableCell className="text-right">${line.unit_price.toFixed(2)}</TableCell>
+                  <TableCell className="text-right">{line.markup_percent}%</TableCell>
+                  <TableCell className="text-right">${line.total.toFixed(2)}</TableCell>
+                  <TableCell>
+                    {badge && <Badge className={badge.className}>{badge.label}</Badge>}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
       <div className="flex flex-col items-end gap-1">
         <p className="text-right text-sm font-medium">
           Version total: ${versionTotal.toFixed(2)}

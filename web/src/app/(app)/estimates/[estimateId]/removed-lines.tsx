@@ -2,6 +2,7 @@
 
 import { ChevronDownIcon } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { restoreEstimateLine } from "@/app/actions/estimates";
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,12 @@ function RemovedLineItem({ estimateId, line }: { estimateId: string; line: Remov
           disabled={pending}
           onClick={() =>
             startTransition(async () => {
-              await restoreEstimateLine(line.id, estimateId);
+              const { error } = await restoreEstimateLine(line.id, estimateId);
+              if (error) {
+                toast.error("Couldn't restore line", { description: error });
+                return;
+              }
+              toast.success("Line restored");
             })
           }
         >

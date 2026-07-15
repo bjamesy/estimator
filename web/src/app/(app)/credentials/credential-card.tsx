@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useRef } from "react";
+import { PencilIcon, XIcon } from "lucide-react";
+import { useActionState, useRef, useState } from "react";
 
 import { updateCredentialFields, uploadCredential } from "@/app/actions/credentials";
 import type { CredentialType } from "@/lib/credential-types";
@@ -36,7 +37,7 @@ const STATUS_BADGES: Record<string, { label: string; className: string }> = {
   },
 };
 
-function daysUntil(dateString: string): number {
+export function daysUntil(dateString: string): number {
   return Math.ceil((new Date(dateString).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
 }
 
@@ -70,6 +71,23 @@ function UploadForm({ type, replace }: { type: CredentialType; replace: boolean 
       </Button>
       {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
     </form>
+  );
+}
+
+// Read-only stand-in for FieldsForm on mobile -- only the fields that are
+// actually set, so an unpopulated credential doesn't show a row of dashes.
+function CredentialSummary({ credential }: { credential: Credential }) {
+  const parts = [
+    credential.issued_date && `Issued ${credential.issued_date}`,
+    credential.expiry_date && `Expires ${credential.expiry_date}`,
+    credential.provider,
+    credential.coverage_amount !== null && `$${credential.coverage_amount.toLocaleString()}`,
+  ].filter(Boolean);
+
+  return (
+    <span className="min-w-0 truncate text-sm text-muted-foreground">
+      {parts.length > 0 ? parts.join(" · ") : "No details entered yet"}
+    </span>
   );
 }
 
@@ -155,6 +173,7 @@ export function CredentialCard({
   const badge = credential ? STATUS_BADGES[credential.status] : null;
   const daysLeft = credential?.expiry_date ? daysUntil(credential.expiry_date) : null;
   const extracting = credential !== null && credential.last_checked_at === null;
+  const [editOpen, setEditOpen] = useState(false);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4">
@@ -181,7 +200,46 @@ export function CredentialCard({
           moment, or enter them yourself below.
         </p>
       )}
-      {credential && <FieldsForm credential={credential} />}
+      {credential && (
+        <>
+          {/* Desktop: fields inline, as before. */}
+          <div className="hidden md:block">
+            <FieldsForm credential={credential} />
+          </div>
+
+          {/* Mobile: a compact read-only summary + a button that opens the
+              same form in a sheet, instead of a 4-field grid always sitting
+              open on the card (of which there are 3 stacked on this page). */}
+          <div className="flex items-center justify-between gap-3 md:hidden">
+            <CredentialSummary credential={credential} />
+            <Button type="button" size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+              <PencilIcon className="size-3.5" />
+              Edit details
+            </Button>
+          </div>
+          {editOpen && (
+            <div className="fixed inset-0 z-50 md:hidden">
+              <div className="absolute inset-0 bg-black/50" onClick={() => setEditOpen(false)} />
+              <div className="absolute inset-x-0 bottom-0 flex max-h-[85vh] flex-col rounded-t-xl border-t bg-background shadow-lg">
+                <div className="flex items-center justify-between border-b p-2 pl-4">
+                  <span className="text-sm font-semibold">{title}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setEditOpen(false)}
+                  >
+                    <XIcon className="size-4" />
+                  </Button>
+                </div>
+                <div className="overflow-y-auto p-4">
+                  <FieldsForm credential={credential} />
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
       {!credential && (
         <p className="text-sm text-muted-foreground">Nothing on file yet.</p>
       )}

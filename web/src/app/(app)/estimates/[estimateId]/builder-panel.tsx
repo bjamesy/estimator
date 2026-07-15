@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useRef, useTransition } from "react";
+import { toast } from "sonner";
 
 import { addBlankEstimateLine, deleteEstimateLine, updateEstimateLine } from "@/app/actions/estimates";
 import { Button } from "@/components/ui/button";
@@ -176,7 +177,12 @@ function EditLinePanel({
         disabled={deleting}
         onClick={() =>
           startDeleting(async () => {
-            await deleteEstimateLine(line.id, estimateId);
+            const { error } = await deleteEstimateLine(line.id, estimateId);
+            if (error) {
+              toast.error("Couldn't remove line", { description: error });
+              return;
+            }
+            toast.success("Line removed");
             onClose();
           })
         }

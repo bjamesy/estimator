@@ -186,7 +186,7 @@ export function DocumentsTable({
         return (
           <div
             key={doc.id}
-            className="flex items-center justify-between gap-3 rounded-lg border px-4 py-3"
+            className="flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <div className="flex items-center gap-2">
@@ -200,18 +200,20 @@ export function DocumentsTable({
               {isStalled && (
                 <span className="text-xs text-destructive">The task appears to have been lost.</span>
               )}
+              {/* Not truncated -- these are diagnostic messages someone is
+                  reading to figure out what went wrong, not a filename;
+                  cutting them off is worse on a phone, where there's no
+                  other way to see the rest. */}
               {retryErrors[doc.id] && (
-                <span className="truncate text-xs text-destructive">{retryErrors[doc.id]}</span>
+                <span className="text-xs text-destructive">{retryErrors[doc.id]}</span>
               )}
               {doc.status === "failed" && latest?.error_message && (
-                <span className="truncate text-xs text-destructive">
+                <span className="text-xs text-destructive">
                   {latest.stage} failed: {latest.error_message}
                 </span>
               )}
               {doc.status === "rejected" && doc.rejection_reason && (
-                <span className="truncate text-xs text-muted-foreground">
-                  {doc.rejection_reason}
-                </span>
+                <span className="text-xs text-muted-foreground">{doc.rejection_reason}</span>
               )}
             </div>
 

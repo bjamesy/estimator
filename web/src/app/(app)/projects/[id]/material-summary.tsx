@@ -106,35 +106,37 @@ export async function MaterialSummary({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Material</TableHead>
-            <TableHead>Total qty</TableHead>
-            <TableHead>Avg unit price</TableHead>
-            <TableHead>Total spent</TableHead>
-            <TableHead>Purchases</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sorted.map((r) => (
-            <TableRow key={r.key}>
-              <TableCell>
-                {r.name}
-                {!r.matched && (
-                  <span className="ml-2 text-xs text-muted-foreground">(unmatched)</span>
-                )}
-              </TableCell>
-              <TableCell>{r.totalQuantity}</TableCell>
-              <TableCell>
-                ${(r.totalQuantity > 0 ? r.weightedPriceSum / r.totalQuantity : 0).toFixed(2)}
-              </TableCell>
-              <TableCell>${r.totalSpent.toFixed(2)}</TableCell>
-              <TableCell>{r.purchaseCount}</TableCell>
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Material</TableHead>
+              <TableHead>Total qty</TableHead>
+              <TableHead>Avg unit price</TableHead>
+              <TableHead>Total spent</TableHead>
+              <TableHead>Purchases</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((r) => (
+              <TableRow key={r.key}>
+                <TableCell>
+                  {r.name}
+                  {!r.matched && (
+                    <span className="ml-2 text-xs text-muted-foreground">(unmatched)</span>
+                  )}
+                </TableCell>
+                <TableCell>{r.totalQuantity}</TableCell>
+                <TableCell>
+                  ${(r.totalQuantity > 0 ? r.weightedPriceSum / r.totalQuantity : 0).toFixed(2)}
+                </TableCell>
+                <TableCell>${r.totalSpent.toFixed(2)}</TableCell>
+                <TableCell>{r.purchaseCount}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <p className="text-right text-sm font-medium">Total spent: ${grandTotal.toFixed(2)}</p>
     </div>
   );
