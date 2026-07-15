@@ -49,7 +49,9 @@ Explicitly out of scope for MVP:
 web/          Next.js (TypeScript) app -- frontend, server actions, Celery task publisher
 workers/      Python + Celery -- extraction pipeline (vision LLM) and material matching (batched LLM call)
 database/     Postgres migrations -- canonical schema source, applied to Supabase
-docs/         architecture.md, data_model.md (kept current); mvp/ (frozen build-history docs, no longer maintained)
+docs/         product.md (end-to-end user journey + known gaps, start here to re-orient);
+              architecture.md, data_model.md (kept current); v2/ (feature specs + plans);
+              mvp/ (frozen build-history docs, no longer maintained)
 ```
 
 Both `web/` and `workers/` need to be running for uploads/confirms to actually process end to end — see the root `README.md`.
