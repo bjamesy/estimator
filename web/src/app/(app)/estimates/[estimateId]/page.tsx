@@ -9,8 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
 import { type BuilderLine, EstimateBuilder } from "./estimate-builder";
-import { RemovedLines } from "./removed-lines";
-import { SnapshotVersionForm } from "./snapshot-version-form";
+import { VersionStatusBar } from "./version-status-bar";
 
 export default async function EstimatePage({
   params,
@@ -106,7 +105,7 @@ export default async function EstimatePage({
   }));
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pb-24">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">{estimate.name}</h1>
         {estimate.project_id && projectName && (
@@ -144,11 +143,8 @@ export default async function EstimatePage({
           lines={builderLines}
           grandTotal={grandTotal}
           projects={projectsData ?? []}
+          removedLines={removedLines}
         />
-
-        {removedLines.length > 0 && (
-          <RemovedLines estimateId={estimateId} lines={removedLines} />
-        )}
       </div>
 
       {/* Immutable version history -- the substrate for change orders.
@@ -156,13 +152,7 @@ export default async function EstimatePage({
           diffs itself against its parent. See
           docs/v2/plans/01-change-orders-plan.md. */}
       <div className="flex flex-col gap-2 border-t pt-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Versions</h2>
-          <SnapshotVersionForm
-            estimateId={estimateId}
-            nextVersionNumber={(versions[0]?.version_number ?? 0) + 1}
-          />
-        </div>
+        <h2 className="text-lg font-semibold">Versions</h2>
         {versions.length > 0 ? (
           <ul className="flex flex-col divide-y">
             {versions.map((v) => (
@@ -204,6 +194,14 @@ export default async function EstimatePage({
           </p>
         )}
       </div>
+
+      <VersionStatusBar
+        estimateId={estimateId}
+        latestVersion={versions[0] ?? null}
+        nextVersionNumber={(versions[0]?.version_number ?? 0) + 1}
+        grandTotal={grandTotal}
+        draftOverCpaThreshold={draftOverCpaThreshold}
+      />
     </div>
   );
 }

@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { HistorySearchTool } from "./history-search-tool";
 import { ImportProjectTool } from "./import-project-tool";
 import { PriceCheckStrip, type PriceCheck } from "./price-check-strip";
+import { RemovedLines } from "./removed-lines";
+
+type RemovedLine = { id: string; description: string; total: number };
 
 export type SelectedLine = {
   id: string;
@@ -30,12 +33,14 @@ export function BuilderPanel({
   selectedLine,
   latestPriceCheck,
   projects,
+  removedLines,
   onClose,
 }: {
   estimateId: string;
   selectedLine: SelectedLine | null;
   latestPriceCheck: PriceCheck | null;
   projects: { id: string; name: string }[];
+  removedLines: RemovedLine[];
   onClose: () => void;
 }) {
   if (selectedLine) {
@@ -78,6 +83,12 @@ export function BuilderPanel({
       <div className="border-t pt-4">
         <ImportProjectTool estimateId={estimateId} projects={projects} />
       </div>
+
+      {removedLines.length > 0 && (
+        <div className="border-t pt-4">
+          <RemovedLines estimateId={estimateId} lines={removedLines} />
+        </div>
+      )}
     </div>
   );
 }
