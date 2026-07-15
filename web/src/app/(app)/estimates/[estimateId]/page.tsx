@@ -2,32 +2,15 @@ import { FolderIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { addBlankEstimateLine } from "@/app/actions/estimates";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { buttonVariants } from "@/components/ui/button";
+import { type RawVersionStatus, VERSION_STATUS_LABELS } from "@/lib/estimate-status";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
-import { EstimateLineRow } from "./estimate-line-row";
-import { HistoricalSearch } from "./historical-search";
+import { type BuilderLine, EstimateBuilder } from "./estimate-builder";
 import { RemovedLines } from "./removed-lines";
 import { SnapshotVersionForm } from "./snapshot-version-form";
-
-const VERSION_STATUS_LABELS: Record<string, string> = {
-  draft: "Draft",
-  pending_contractor_signature: "Awaiting your signature",
-  pending_client_signature: "Awaiting client signature",
-  executed: "Executed",
-  superseded: "Superseded",
-};
 
 export default async function EstimatePage({
   params,
@@ -103,7 +86,24 @@ export default async function EstimatePage({
       : null;
   const draftOverCpaThreshold = draftPctFromRoot !== null && draftPctFromRoot >= 10;
 
-  const addBlankLine = addBlankEstimateLine.bind(null, estimateId);
+  // For the builder panel's "Import from project" tool -- any company
+  // project, not just the one (if any) this estimate is already linked to.
+  const { data: projectsData } = await supabase
+    .from("projects")
+    .select("id, name")
+    .order("name", { ascending: true });
+
+  const builderLines: BuilderLine[] = lines.map((line) => ({
+    id: line.id,
+    description: line.description,
+    quantity: line.quantity,
+    unit_price: line.unit_price,
+    markup_percent: line.markup_percent,
+    total: line.total,
+    vendor_product_url: line.vendor_product_url,
+    price_verified_at: line.price_verified_at,
+    latestPriceCheck: latestCheckByLine.get(line.id) ?? null,
+  }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -115,7 +115,7 @@ export default async function EstimatePage({
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             <FolderIcon className="size-4" />
-            {projectName}
+            Project: {projectName}
           </Link>
         )}
       </div>
@@ -136,69 +136,15 @@ export default async function EstimatePage({
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Lines</h2>
-          <form action={addBlankLine}>
-            <Button type="submit" size="sm" variant="outline">
-              Add blank line
-            </Button>
-          </form>
-        </div>
+      <div className="flex flex-col gap-4">
+        <h2 className="text-lg font-semibold">Lines</h2>
 
-        {lines.length > 0 ? (
-          <>
-            <Table>
-              <TableHeader>
-                {/* Header is one colSpan-6 cell wrapping the SAME
-                    grid-cols-6 layout as each body row (EstimateLineRow),
-                    so the labels line up with the input columns. Real <th>
-                    cells wouldn't: every body row is a single colSpan-6 cell
-                    with its own internal grid, so the table's auto column
-                    widths never match. */}
-                <TableRow>
-                  <TableHead colSpan={6} className="p-0">
-                    {/* min-w keeps the columns usable on mobile: the table's
-                        overflow-x-auto container scrolls horizontally instead
-                        of shrinking inputs to nothing. Must match the row
-                        grid's min-w in estimate-line-row.tsx so header and
-                        body stay aligned. */}
-                    <div className="grid min-w-[640px] grid-cols-6 items-center gap-2 p-2 text-muted-foreground">
-                      <span className="col-span-2">Description</span>
-                      <span>Qty</span>
-                      <span>Unit price</span>
-                      <span>Markup %</span>
-                      <span>Total</span>
-                    </div>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.map((line) => (
-                  <EstimateLineRow
-                    // Keying on total (which changes whenever any editable
-                    // field does, via server-side recalculation) forces a
-                    // clean remount instead of an in-place update -- the
-                    // defaultValue-based inputs below need a remount to
-                    // pick up fresh server data without React warning
-                    // about changing an uncontrolled input's default value
-                    // after the fact. vendor_product_url keys the same way
-                    // so the price-check strip's URL input follows suit.
-                    key={`${line.id}-${line.total}-${line.vendor_product_url ?? ""}`}
-                    line={line}
-                    estimateId={estimateId}
-                    latestPriceCheck={latestCheckByLine.get(line.id) ?? null}
-                  />
-                ))}
-              </TableBody>
-            </Table>
-            <p className="text-right text-sm font-medium">
-              Estimate total: ${grandTotal.toFixed(2)}
-            </p>
-          </>
-        ) : (
-          <p className="text-muted-foreground">No lines yet.</p>
-        )}
+        <EstimateBuilder
+          estimateId={estimateId}
+          lines={builderLines}
+          grandTotal={grandTotal}
+          projects={projectsData ?? []}
+        />
 
         {removedLines.length > 0 && (
           <RemovedLines estimateId={estimateId} lines={removedLines} />
@@ -227,7 +173,7 @@ export default async function EstimatePage({
                 >
                   <span className="font-medium">Version {v.version_number}</span>
                   <Badge variant="outline">
-                    {VERSION_STATUS_LABELS[v.status] ?? v.status}
+                    {VERSION_STATUS_LABELS[v.status as RawVersionStatus] ?? v.status}
                   </Badge>
                   <span className="text-muted-foreground">
                     {new Date(v.created_at).toLocaleDateString()}
@@ -257,10 +203,6 @@ export default async function EstimatePage({
             future change order is measured against.
           </p>
         )}
-      </div>
-
-      <div className="border-t pt-6">
-        <HistoricalSearch estimateId={estimateId} />
       </div>
     </div>
   );
