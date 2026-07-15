@@ -27,7 +27,7 @@ export function VersionStatusBar({
     // viewport width instead of the space after the sidebar, so it drifts
     // left of the actual content column (including the builder panel) above it.
     <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:left-64">
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="font-medium">${grandTotal.toFixed(2)}</span>
           {latestVersion ? (

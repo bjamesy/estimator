@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 
-import { CredentialCard, type Credential } from "./credential-card";
+import { CredentialCard, type Credential, daysUntil } from "./credential-card";
+import { CredentialTabs } from "./credential-tabs";
 
 // Contractor credential verification, V1 "document-on-file" -- see
 // docs/v2/plans/02-verification-plan.md. One active credential per type;
@@ -13,17 +14,20 @@ const CREDENTIAL_SECTIONS = [
     title: "WSIB clearance",
     description:
       "Workplace Safety and Insurance Board clearance certificate — shows your workers are covered.",
+    required: true,
   },
   {
     type: "liability_insurance" as const,
     title: "Liability insurance",
     description:
       "Commercial general liability certificate — clients commonly expect $2M coverage.",
+    required: true,
   },
   {
     type: "business_registration" as const,
     title: "Business registration",
     description: "Business registration or corporate good-standing document (optional).",
+    required: false,
   },
 ];
 
@@ -50,17 +54,26 @@ export default async function CredentialsPage() {
           You&apos;ll be reminded before anything expires.
         </p>
       </div>
-      <div className="flex flex-col gap-4">
-        {CREDENTIAL_SECTIONS.map((section) => (
-          <CredentialCard
-            key={section.type}
-            type={section.type}
-            title={section.title}
-            description={section.description}
-            credential={active.get(section.type) ?? null}
-          />
-        ))}
-      </div>
+      <CredentialTabs
+        tabs={CREDENTIAL_SECTIONS.map((section) => {
+          const credential = active.get(section.type) ?? null;
+          const daysLeft = credential?.expiry_date ? daysUntil(credential.expiry_date) : null;
+          return {
+            key: section.type,
+            label: section.title,
+            needsAttention:
+              (section.required && credential === null) || (daysLeft !== null && daysLeft <= 30),
+            content: (
+              <CredentialCard
+                type={section.type}
+                title={section.title}
+                description={section.description}
+                credential={credential}
+              />
+            ),
+          };
+        })}
+      />
       <p className="text-xs text-muted-foreground">
         Status reflects the documents you&apos;ve submitted — it is not an independent
         verification of standing with WSIB, your insurer, or a registry.

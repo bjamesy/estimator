@@ -20,7 +20,7 @@ export function SnapshotVersionForm({
   );
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-start gap-1.5 sm:items-end">
       <form action={formAction}>
         <Button type="submit" size="sm" variant="outline" disabled={pending}>
           {pending
@@ -30,7 +30,9 @@ export function SnapshotVersionForm({
               : `Snapshot as version ${nextVersionNumber}`}
         </Button>
       </form>
-      {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+      {state?.error && (
+        <p className="text-sm text-destructive sm:text-right">{state.error}</p>
+      )}
     </div>
   );
 }
