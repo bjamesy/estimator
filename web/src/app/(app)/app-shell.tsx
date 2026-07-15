@@ -1,6 +1,15 @@
 "use client";
 
-import { HouseIcon, MenuIcon, SearchIcon, ShieldCheckIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FileTextIcon,
+  FolderIcon,
+  MenuIcon,
+  SearchIcon,
+  ShieldCheckIcon,
+  XIcon,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -13,7 +22,6 @@ import { cn } from "@/lib/utils";
 type Item = { id: string; name: string };
 
 const PRIMARY_NAV = [
-  { href: "/", label: "Home", icon: HouseIcon, exact: true, shortcut: undefined },
   { href: "/search", label: "Search", icon: SearchIcon, exact: false, shortcut: "⌘K" },
   {
     href: "/credentials",
@@ -74,52 +82,56 @@ export function AppShell({
         Estimator
       </Link>
 
-      <div className="flex flex-1 flex-col gap-5 overflow-y-auto">
-        <nav className="flex flex-col gap-1">
-          {PRIMARY_NAV.map((item) => {
-            const active = item.exact
-              ? pathname === item.href
-              : pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm",
-                  rowClass(active),
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                {item.label}
-                {item.shortcut && (
-                  <kbd className="ml-auto hidden rounded border border-current/25 px-1.5 py-0.5 text-[10px] font-medium opacity-70 md:inline-block">
-                    {item.shortcut}
-                  </kbd>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
+      {/* One flat, evenly-spaced nav -- Search/Credentials and the
+          collapsible Projects/Estimates rows are all peers, not separate
+          groups, so they share a single gap rather than being split across
+          two containers with different spacing. */}
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
+        {PRIMARY_NAV.map((item) => {
+          const active = item.exact
+            ? pathname === item.href
+            : pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm",
+                rowClass(active),
+              )}
+            >
+              <Icon className="size-4 shrink-0" />
+              {item.label}
+              {item.shortcut && (
+                <kbd className="ml-auto hidden rounded border border-current/25 px-1.5 py-0.5 text-[10px] font-medium opacity-70 md:inline-block">
+                  {item.shortcut}
+                </kbd>
+              )}
+            </Link>
+          );
+        })}
 
-        <SidebarSection
+        <CollapsibleNavSection
           title="Projects"
+          icon={FolderIcon}
           listHref="/projects"
           basePath="/projects"
           items={projects}
           emptyLabel="No projects yet"
           pathname={pathname}
         />
-        <SidebarSection
+        <CollapsibleNavSection
           title="Estimates"
+          icon={FileTextIcon}
           listHref="/estimates"
           basePath="/estimates"
           items={estimates}
           emptyLabel="No estimates yet"
           pathname={pathname}
         />
-      </div>
+      </nav>
     </div>
   );
 
@@ -218,11 +230,16 @@ export function AppShell({
   );
 }
 
-// A titled group in the sidebar that lists the actual projects/estimates as
-// rows (the section title links to the full list page). Mirrors the
-// "MY SCRIPTS"-style listing pattern.
-function SidebarSection({
+// A top-level nav row (icon + label, styled like Search/Credentials above
+// it) that expands into its child projects/estimates rather than always
+// showing every one of them -- a company with a dozen estimates shouldn't
+// push Credentials off screen. The label still links to the full list page;
+// the chevron independently toggles the child list. Auto-expands when the
+// current route is inside the section, but never auto-collapses a section
+// the user opened manually (fighting a manual toggle reads as broken).
+function CollapsibleNavSection({
   title,
+  icon: Icon,
   listHref,
   basePath,
   items,
@@ -230,56 +247,82 @@ function SidebarSection({
   pathname,
 }: {
   title: string;
+  icon: LucideIcon;
   listHref: string;
   basePath: string;
   items: Item[];
   emptyLabel: string;
   pathname: string;
 }) {
-  const onList = pathname === listHref;
+  const withinSection = pathname === listHref || pathname.startsWith(`${basePath}/`);
+  const [open, setOpen] = useState(withinSection);
+
+  // Auto-expand when navigation lands inside this section, adjusted during
+  // render (React's documented pattern for this) rather than in an effect
+  // -- avoids an extra post-commit render pass just to flip a boolean.
+  const [trackedWithinSection, setTrackedWithinSection] = useState(withinSection);
+  if (withinSection !== trackedWithinSection) {
+    setTrackedWithinSection(withinSection);
+    if (withinSection) setOpen(true);
+  }
+
+  const active = pathname === listHref;
 
   return (
     <div className="flex flex-col gap-1">
-      <Link
-        href={listHref}
-        className={cn(
-          "px-2 py-1 text-xs font-medium uppercase tracking-wide transition-colors",
-          onList ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        {title}
-      </Link>
+      <div className={cn("flex items-center rounded-lg pr-1", rowClass(active))}>
+        <Link
+          href={listHref}
+          aria-current={active ? "page" : undefined}
+          className="flex flex-1 items-center gap-3 px-3 py-2 text-sm"
+        >
+          <Icon className="size-4 shrink-0" />
+          {title}
+        </Link>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
+          aria-expanded={open}
+          className="rounded-md p-1.5 opacity-70 hover:opacity-100"
+        >
+          <ChevronDownIcon
+            className={cn("size-3.5 transition-transform", !open && "-rotate-90")}
+          />
+        </button>
+      </div>
 
-      {items.length === 0 ? (
-        <p className="px-2 py-1 text-sm text-sidebar-foreground/50">{emptyLabel}</p>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {items.map((item) => {
-            const active = pathname === `${basePath}/${item.id}`;
-            return (
-              <Link
-                key={item.id}
-                href={`${basePath}/${item.id}`}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
-                  rowClass(active),
-                )}
-              >
-                {/* Leading marker anchors each row so the list reads as
-                    rows, not floating text. */}
-                <span
+      {open &&
+        (items.length === 0 ? (
+          <p className="px-2 py-1 pl-9 text-sm text-sidebar-foreground/50">{emptyLabel}</p>
+        ) : (
+          <div className="flex flex-col gap-0.5 pl-6">
+            {items.map((item) => {
+              const itemActive = pathname === `${basePath}/${item.id}`;
+              return (
+                <Link
+                  key={item.id}
+                  href={`${basePath}/${item.id}`}
+                  aria-current={itemActive ? "page" : undefined}
                   className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    active ? "bg-sidebar-primary-foreground" : "bg-primary/60",
+                    "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm",
+                    rowClass(itemActive),
                   )}
-                />
-                <span className="truncate">{item.name}</span>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                >
+                  {/* Leading marker anchors each row so the list reads as
+                      rows, not floating text. */}
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      itemActive ? "bg-sidebar-primary-foreground" : "bg-primary/60",
+                    )}
+                  />
+                  <span className="truncate">{item.name}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ))}
     </div>
   );
 }
