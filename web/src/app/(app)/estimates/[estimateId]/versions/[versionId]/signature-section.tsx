@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MobileSheet } from "@/components/ui/mobile-sheet";
 import { CONSENT_STATEMENT } from "@/lib/change-order-copy";
 
 // Contractor-side signing UI for a version page. Which piece renders is
@@ -59,35 +60,26 @@ export function SignContractorForm({
     signVersionAsContractor.bind(null, versionId, estimateId),
     null,
   );
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   if (state?.signingUrl) {
     return <CopyableLink url={state.signingUrl} emailedTo={state.emailedTo} />;
   }
 
-  return (
-    <form action={formAction} className="flex flex-col gap-4 rounded-lg border p-4">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold">Sign as contractor</h2>
-        <p className="text-sm text-muted-foreground">
-          Type your full legal name — it will be adopted as your signature and
-          recorded with a timestamp. Signing locks this version and creates the
-          link your client signs through.
-        </p>
-      </div>
+  // Nested label, no id/htmlFor -- this form renders twice at once (desktop
+  // copy stays mounted-but-hidden below md while the mobile sheet's copy
+  // is open), so a shared id would collide and break label association.
+  const fields = (
+    <>
       <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="flex flex-1 flex-col gap-1.5 sm:max-w-sm">
-          <Label htmlFor="signer_name">Full name</Label>
-          <Input id="signer_name" name="signer_name" required autoComplete="name" />
-        </div>
-        <div className="flex flex-1 flex-col gap-1.5 sm:max-w-sm">
-          <Label htmlFor="client_email">Client email (optional)</Label>
-          <Input
-            id="client_email"
-            name="client_email"
-            type="email"
-            placeholder="Sends them the signing link"
-          />
-        </div>
+        <label className="flex flex-1 flex-col gap-1.5 text-sm sm:max-w-sm">
+          Full name
+          <Input name="signer_name" required autoComplete="name" />
+        </label>
+        <label className="flex flex-1 flex-col gap-1.5 text-sm sm:max-w-sm">
+          Client email (optional)
+          <Input name="client_email" type="email" placeholder="Sends them the signing link" />
+        </label>
       </div>
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" name="consent" className="mt-0.5" required />
@@ -97,7 +89,45 @@ export function SignContractorForm({
         {pending ? "Signing..." : "Sign and create client link"}
       </Button>
       {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
-    </form>
+    </>
+  );
+
+  const description = (
+    <p className="text-sm text-muted-foreground">
+      Type your full legal name — it will be adopted as your signature and
+      recorded with a timestamp. Signing locks this version and creates the
+      link your client signs through.
+    </p>
+  );
+
+  return (
+    <>
+      {/* Desktop: inline, as before. */}
+      <form action={formAction} className="hidden flex-col gap-4 rounded-lg border p-4 md:flex">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold">Sign as contractor</h2>
+          {description}
+        </div>
+        {fields}
+      </form>
+
+      {/* Mobile: a single button instead of the full form always sitting
+          open at the bottom of the document -- opens the same form in a
+          sheet, same pattern as the estimate builder and credential card. */}
+      <Button
+        type="button"
+        onClick={() => setMobileOpen(true)}
+        className="w-full md:hidden"
+      >
+        Sign as contractor
+      </Button>
+      <MobileSheet open={mobileOpen} onClose={() => setMobileOpen(false)} title="Sign as contractor">
+        <form action={formAction} className="flex flex-col gap-4">
+          {description}
+          {fields}
+        </form>
+      </MobileSheet>
+    </>
   );
 }
 
