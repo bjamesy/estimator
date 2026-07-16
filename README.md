@@ -38,7 +38,7 @@ cd web && npm install && npm run dev
 
 # workers -- needs its own terminal, running alongside web/
 cd workers && python3.13 -m venv .venv && .venv/bin/pip install -e .
-set -a && source .env && set +a && .venv/bin/celery -A estimator_workers.celery_app worker --loglevel=info
+set -a && source .env && set +a && .venv/bin/celery -A estimator_workers.celery_app worker -B --loglevel=info
 ```
 
 Both need to be running for uploads to actually process — `web/` publishes the extraction task, `workers/` consumes it. Requires a reachable RabbitMQ instance (step 2 above); `docker compose up rabbitmq` on its own is a fine way to get one without a CloudAMQP account (`MESSAGE_BROKER_URL=amqp://guest:guest@localhost:5672//` in both `.env` files in that case).

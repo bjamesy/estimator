@@ -18,8 +18,13 @@ Company
 │           └── LineItem              (1:N)
 │               └── MaterialMatch     (1:1 — links to MaterialCatalog)
 ├── Estimate                          (1:N — company-scoped; optional FK to Project)
-│   └── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
+│   ├── EstimateLine                  (1:N — snapshot, optional FK back to a source LineItem)
+│   └── EstimateVersion               (1:N — immutable snapshots; substrate for change orders)
+│       ├── EstimateVersionLine       (1:N — frozen copy of the draft lines at snapshot time)
+│       ├── EstimateSignature         (0-2:1 — contractor + client signatures; immutable)
+│       └── ClientSigningToken        (1:N — hashed, single-use, expiring public signing links)
 ├── MaterialCatalog                   (1:N — company-scoped canonical materials)
+├── Credential                        (1:N — WSIB / insurance / registration certificates on file)
 └── CompanySupplier                   (1:N — company's relationship to a Supplier)
         └── Supplier                  (N:1 — global, not company-scoped)
 ```
@@ -196,6 +201,29 @@ Global entity — the one deliberate exception to company scoping. A supplier li
 
 ---
 
+## Credential
+
+```
+Credential
+  id
+  company_id             FK → Company
+  credential_type        "wsib" | "liability_insurance" | "business_registration"
+  storage_path           original certificate — documents bucket, {company_id}/credentials/…
+  status                 "self_reported" | "verified" | "expired"
+  issued_date            nullable
+  expiry_date            nullable
+  coverage_amount        numeric, nullable — structured so "$2M liability" is filterable
+  provider               nullable — issuer/insurer name
+  extraction_result      jsonb, nullable — raw vision-LLM reading (kept like ExtractionResult)
+  last_checked_at        nullable — when extraction last ran (null = pending)
+  expiry_reminders_sent  int — highest reminder stage sent (0 none, 1=30d, 2=14d, 3=1d)
+  superseded_at          nullable — renewal keeps history; partial unique index enforces
+                          one ACTIVE credential per type per company
+  created_at
+```
+
+Contractor credential verification, V1 "document-on-file" (`0020_credentials.sql`, `docs/v2/plans/02-verification-plan.md`). Upload supersedes the prior active credential of that type (history retained). The worker's `extract_credential` task reuses the invoice pipeline's vision call (`call_vision_llm` now takes a `prompt` parameter) to read issued/expiry dates, provider, and coverage — filling only columns that are still null, so the contractor's manual corrections are never overwritten; an unreadable field stays null rather than fabricated. The hourly `credential_expiry_sweep` beat task flips past-expiry credentials to `expired` and emails staged 30/14/1-day renewal reminders (each stage fires once, tracked by `expiry_reminders_sent`; a corrected expiry resets the ladder). `verified` is reserved for the possible V2 independent WSIB cross-check — today status reflects submitted documents, not a guarantee, and the UI says so.
+
 ## CompanySupplier
 
 ```
@@ -240,9 +268,116 @@ EstimateLine
   markup_percent        default 0
   total                 quantity * unit_price * (1 + markup_percent / 100), recalculated on edit
   deleted_at            timestamptz, nullable — non-null tombstones the line (removed but restorable)
+  vendor_product_url    text, nullable — saved vendor product page for price spot-checks (0021)
+  price_verified_at     timestamptz, nullable — last time a check CONFIRMED (or the contractor
+                         applied) the vendor's price; carried into version snapshots and the PDF
   created_at
 ```
 
 A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.
 
 **Removing a line is a soft delete** (`0015_estimate_line_soft_delete.sql`). `deleteEstimateLine` sets `deleted_at` instead of dropping the row; `restoreEstimateLine` clears it. A tombstoned line is retained and shown struck-through under "Removed lines" with a Restore button, but is excluded from the estimate total and any export — both count only rows where `deleted_at is null`. Newly inserted lines are always active (`deleted_at` null).
+
+## VendorPriceCheck
+
+```
+VendorPriceCheck
+  id
+  estimate_line_id     FK → EstimateLine, CASCADE
+  company_id           FK → Company
+  vendor_product_url   URL as fetched — re-checking is a pure re-fetch, no matching logic
+  estimate_price       the line's unit_price at check time (comparison stays reproducible)
+  fetched_price        nullable — null when fetch/extraction failed
+  outcome              "confirmed" | "changed" | "unverifiable"
+  checked_at
+  created_at
+```
+
+Vendor price spot-checks (`0021_vendor_price_check.sql`, `docs/v2/plans/05-vendor-price-check-plan.md`). Append-only history written only by the worker's `check_vendor_price` task (select-only RLS for authenticated); the latest row per line is the current state. One saved URL per line, host-allowlisted on both sides (`web/src/lib/vendors.ts` ↔ `workers/estimator_workers/vendor_price.py` — the allowlist is the SSRF guard; arbitrary URLs are never fetched). Extraction reads standard structured data (JSON-LD Product offers → price meta tags → itemprop); "materially unchanged" means within 1% or a cent. A `changed` outcome **never** edits the line — the contractor's explicit "Use $X" action (`applyCheckedPrice`) is the only path a fetched price reaches the estimate. A `confirmed` check (or an applied price) stamps `estimate_lines.price_verified_at`, which snapshots carry into `estimate_version_lines` and the change-order PDF renders as "(price verified YYYY-MM-DD)" — the tie into the compliance audit trail. Checks run on demand (spec option (a)); re-checking pending unsigned versions periodically is the deferred option (b).
+
+## EstimateVersion
+
+```
+EstimateVersion
+  id
+  estimate_id            FK → Estimate, RESTRICT
+  company_id             FK → Company, RESTRICT
+  parent_version_id      FK → EstimateVersion, RESTRICT, nullable — previous version; null on the original
+  version_number         int — monotonic per estimate; unique (estimate_id, version_number)
+  status                 "draft" | "pending_contractor_signature" | "pending_client_signature"
+                          | "executed" | "superseded"
+  total                  sum of non-removed line totals, frozen at snapshot time
+  pct_change_from_root   vs. the version 1 total; null on the root — >= 10 is the Ontario CPA
+                          threshold requiring documented client consent
+  contractor_signed_at   timestamptz, nullable (signing lands in change-orders Phase 3)
+  client_signed_at       timestamptz, nullable
+  pdf_storage_path       text, nullable — the rendered legal PDF for an executed version;
+                          written by the render_change_order_pdf worker task (Phase 4)
+  created_at
+```
+
+An immutable snapshot of the estimate's active draft lines — the substrate for change orders (`docs/v2/plans/01-change-orders-plan.md`, `0016_estimate_versions.sql`). The live `Estimate`/`EstimateLine` stay the editable working draft; `snapshotEstimateVersion` (`web/src/app/actions/change-orders.ts`) freezes them into a new version. Append-only: after creation, only `status`, the signature timestamps, and `pdf_storage_path` ever change, and only forward through the lifecycle.
+
+**The PDF is the legal artifact; structured rows are for search.** On execution, the client-signing action best-effort publishes `render_change_order_pdf` (`workers/estimator_workers/change_order_pdf.py` + `tasks.py`), which renders the version deterministically from its immutable rows and uploads to the `documents` bucket under `{company_id}/change-orders/{version_id}.pdf` — covered by the existing company-prefix storage policy (`0005`). Re-rendering is idempotent (upsert of identical content), so the version page offers a manual "Generate PDF" retry for publish failures and pre-Phase-4 executed versions. All document language lives in template slots (`TEMPLATE`, placeholder copy pending the lawyer-vetted template), never inline in rendering code. The whole chain is `ON DELETE RESTRICT` — a signed change order is a legal artifact, same retention discipline as the `Document → Invoice → LineItem` chain. A new snapshot marks the previous version `superseded` unless it was `executed` — executed versions are never touched. A snapshot identical to the latest version is refused.
+
+## EstimateVersionLine
+
+```
+EstimateVersionLine
+  id
+  estimate_version_id     FK → EstimateVersion, RESTRICT
+  company_id              FK → Company, RESTRICT
+  source_estimate_line_id FK → EstimateLine, SET NULL — which draft line this froze; the diff key
+  source_line_item_id     FK → LineItem, SET NULL — provenance carried through from the draft line
+  description
+  quantity
+  unit_price
+  markup_percent
+  total
+  change_kind             "unchanged" | "added" | "modified" | "removed" — vs. the parent version
+  created_at
+```
+
+Lines are matched across versions by `source_estimate_line_id` (which draft line they froze), not by description. `change_kind` is computed at snapshot time against the parent version's non-removed lines; on the root version every line is `unchanged` (the root is the baseline). `removed` rows are lines that existed in the parent but not in this snapshot — carried into the new version with the parent's frozen values so a change order is self-contained, shown struck-through, and excluded from the version's `total`.
+
+## EstimateSignature
+
+```
+EstimateSignature
+  id
+  estimate_version_id  FK → EstimateVersion, RESTRICT
+  company_id           FK → Company, RESTRICT
+  signer_role          "contractor" | "client" — unique (estimate_version_id, signer_role)
+  signer_name
+  signer_email         nullable — captured for the client if offered
+  signature_data       v1: the typed full name adopted as the signature; opaque text so a
+                        drawn capture or e-signature provider reference can reuse the column
+  ip_address           nullable — best-effort audit metadata from request headers
+  user_agent           nullable
+  signed_at
+  created_at
+```
+
+The legal artifact of the signing lifecycle (`0017_signatures.sql`). Unlike every other table's blanket `for all` company policy, `estimate_signatures` has **no update or delete RLS policies** — once a signature row exists, nobody (including the contractor's own authenticated session) can alter or remove it through the API. The contractor's signature is inserted via the authed client under the company insert policy; the client's is inserted via the server-side admin client (no session exists on the public signing page). The `(estimate_version_id, signer_role)` unique constraint doubles as the atomic backstop against raced double-signs. Capture mechanics live behind `web/src/lib/signatures.ts` so a certified e-signature provider can replace in-house capture without touching the lifecycle.
+
+## ClientSigningToken
+
+```
+ClientSigningToken
+  id
+  estimate_version_id  FK → EstimateVersion, RESTRICT
+  company_id           FK → Company, RESTRICT
+  token_hash           SHA-256 of the raw token, unique — the raw token exists only in the
+                        signing URL; a database read can never recover a usable link
+  client_email         nullable — who the link was emailed to (0019); contractor can still
+                        hand the link over manually without email
+  expires_at           30 days from mint (SIGNING_TOKEN_TTL_DAYS)
+  used_at              nullable — set atomically when the client signs (single-use claim)
+  reminder_sent_at     nullable — non-null marks a token minted BY the reminder sweep;
+                        excludes it from future sweeps (one reminder per signing chain)
+  created_at
+```
+
+Authorizes the no-account client signing page (`/sign/[token]`). 256-bit random tokens; validation and all data access on the public page go through the admin client — there are deliberately no anon RLS policies anywhere. Authenticated policies are select/insert/delete only (no update): a contractor can mint and revoke unused links (minting a new link deletes prior unused ones — at most one live link per version), but can't tamper with `used_at`/`expires_at` to resurrect a consumed or expired link. The signing action's status gate (`pending_client_signature` only) means a link for a version superseded mid-signing refuses calmly; superseding also deletes the unused token.
+
+**Notifications (Phase 5, `0019_notifications.sql`).** If the contractor supplies a client email at sign/mint time, the worker emails the signing link (`send_signing_request_email` — the raw URL travels as a task argument, since it exists nowhere else). On execution the worker emails every company member (`notify_change_order_executed`, resolving emails via `company_members` → auth admin). A Celery-beat sweep (`send_signing_reminders`, hourly; the worker runs with `-B`) sends one reminder per signing chain after 3 days: since raw tokens are never stored, the reminder **mints a fresh token** (Python token generation mirrors `web/src/lib/signatures.ts` exactly), revokes the old one, and emails the new link. Email transport is `workers/estimator_workers/emails.py` — Resend when `RESEND_API_KEY` is set, console-transport logging otherwise.

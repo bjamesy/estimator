@@ -5,6 +5,11 @@ import { createClient } from "celery-node";
 const QUEUE = "celery";
 const PROCESS_DOCUMENT_TASK = "estimator_workers.tasks.process_document";
 const MATCH_MATERIALS_TASK = "estimator_workers.tasks.match_materials";
+const RENDER_CHANGE_ORDER_PDF_TASK = "estimator_workers.tasks.render_change_order_pdf";
+const SEND_SIGNING_REQUEST_EMAIL_TASK = "estimator_workers.tasks.send_signing_request_email";
+const NOTIFY_CHANGE_ORDER_EXECUTED_TASK = "estimator_workers.tasks.notify_change_order_executed";
+const EXTRACT_CREDENTIAL_TASK = "estimator_workers.tasks.extract_credential";
+const CHECK_VENDOR_PRICE_TASK = "estimator_workers.tasks.check_vendor_price";
 
 // celery-node's Client.sendTask()/Task.delay() publish fire-and-forget with
 // no way to await success or catch a connection failure -- the promise
@@ -65,4 +70,64 @@ export async function publishMatchMaterialsTask(
   companyId: string,
 ): Promise<void> {
   await publishTask(MATCH_MATERIALS_TASK, [invoiceId, companyId]);
+}
+
+// Renders the legal PDF artifact for an executed estimate version
+// (docs/v2/plans/01-change-orders-plan.md -> Phase 4). Published
+// best-effort after client signing and from the version page's manual
+// "Generate PDF" retry; a publish failure just means pdf_storage_path
+// stays null and the retry button remains available.
+export async function publishRenderChangeOrderPdfTask(
+  versionId: string,
+  companyId: string,
+): Promise<void> {
+  await publishTask(RENDER_CHANGE_ORDER_PDF_TASK, [versionId, companyId]);
+}
+
+// Emails the client their signing link. The raw signing URL travels as a
+// task argument because it exists nowhere else -- the database stores
+// only the token's hash. Published best-effort: the link is always also
+// shown to the contractor to copy, so a broker hiccup degrades to the
+// manual handoff, never a lost link.
+export async function publishSendSigningRequestEmailTask(
+  versionId: string,
+  companyId: string,
+  clientEmail: string,
+  signingUrl: string,
+): Promise<void> {
+  await publishTask(SEND_SIGNING_REQUEST_EMAIL_TASK, [
+    versionId,
+    companyId,
+    clientEmail,
+    signingUrl,
+  ]);
+}
+
+// Tells the contractor the client signed. Best-effort after execution.
+export async function publishNotifyChangeOrderExecutedTask(
+  versionId: string,
+  companyId: string,
+): Promise<void> {
+  await publishTask(NOTIFY_CHANGE_ORDER_EXECUTED_TASK, [versionId, companyId]);
+}
+
+// Reads key fields (expiry especially) off an uploaded credential
+// certificate -- docs/v2/plans/02-verification-plan.md Phase 2. Best
+// effort: on failure the contractor enters the fields manually.
+export async function publishExtractCredentialTask(
+  credentialId: string,
+  companyId: string,
+  storagePath: string,
+): Promise<void> {
+  await publishTask(EXTRACT_CREDENTIAL_TASK, [credentialId, companyId, storagePath]);
+}
+
+// Spot-checks one estimate line's saved vendor product URL against the
+// page's current listed price -- docs/v2/plans/05-vendor-price-check-plan.md.
+// The worker records the outcome; it never edits the line's price.
+export async function publishCheckVendorPriceTask(
+  estimateLineId: string,
+  companyId: string,
+): Promise<void> {
+  await publishTask(CHECK_VENDOR_PRICE_TASK, [estimateLineId, companyId]);
 }

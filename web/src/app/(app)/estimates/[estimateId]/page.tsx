@@ -1,23 +1,15 @@
-import { FolderIcon } from "lucide-react";
+import { FolderIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { addBlankEstimateLine } from "@/app/actions/estimates";
-import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { type RawVersionStatus, VERSION_STATUS_LABELS } from "@/lib/estimate-status";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
-import { EstimateLineRow } from "./estimate-line-row";
-import { HistoricalSearch } from "./historical-search";
-import { RemovedLines } from "./removed-lines";
+import { type BuilderLine, EstimateBuilder } from "./estimate-builder";
+import { VersionStatusBar } from "./version-status-bar";
 
 export default async function EstimatePage({
   params,
@@ -41,7 +33,9 @@ export default async function EstimatePage({
 
   const { data: allLines } = await supabase
     .from("estimate_lines")
-    .select("id, description, quantity, unit_price, markup_percent, total, deleted_at")
+    .select(
+      "id, description, quantity, unit_price, markup_percent, total, deleted_at, vendor_product_url, price_verified_at",
+    )
     .eq("estimate_id", estimateId)
     .order("created_at", { ascending: true });
 
@@ -52,10 +46,66 @@ export default async function EstimatePage({
 
   const grandTotal = lines.reduce((sum, l) => sum + l.total, 0);
 
-  const addBlankLine = addBlankEstimateLine.bind(null, estimateId);
+  // Latest vendor price check per active line (append-only history --
+  // newest row wins). See docs/v2/plans/05-vendor-price-check-plan.md.
+  const lineIds = lines.map((l) => l.id);
+  const { data: checksData } =
+    lineIds.length > 0
+      ? await supabase
+          .from("vendor_price_checks")
+          .select("estimate_line_id, outcome, fetched_price, estimate_price, checked_at")
+          .in("estimate_line_id", lineIds)
+          .order("checked_at", { ascending: false })
+      : { data: [] };
+  const latestCheckByLine = new Map<
+    string,
+    { outcome: string; fetched_price: number | null; estimate_price: number; checked_at: string }
+  >();
+  for (const check of checksData ?? []) {
+    if (!latestCheckByLine.has(check.estimate_line_id)) {
+      latestCheckByLine.set(check.estimate_line_id, check);
+    }
+  }
+
+  const { data: versionsData } = await supabase
+    .from("estimate_versions")
+    .select("id, version_number, status, total, pct_change_from_root, created_at")
+    .eq("estimate_id", estimateId)
+    .order("version_number", { ascending: false });
+  const versions = versionsData ?? [];
+
+  // Live CPA check: how far the *current draft* has moved from the original
+  // (version 1) total. Ontario's Consumer Protection Act requires documented
+  // client consent for increases of 10% or more, so warn while editing --
+  // before the snapshot -- not only on the frozen version.
+  const rootVersion = versions.find((v) => v.version_number === 1);
+  const draftPctFromRoot =
+    rootVersion && rootVersion.total > 0
+      ? ((grandTotal - rootVersion.total) / rootVersion.total) * 100
+      : null;
+  const draftOverCpaThreshold = draftPctFromRoot !== null && draftPctFromRoot >= 10;
+
+  // For the builder panel's "Import from project" tool -- any company
+  // project, not just the one (if any) this estimate is already linked to.
+  const { data: projectsData } = await supabase
+    .from("projects")
+    .select("id, name")
+    .order("name", { ascending: true });
+
+  const builderLines: BuilderLine[] = lines.map((line) => ({
+    id: line.id,
+    description: line.description,
+    quantity: line.quantity,
+    unit_price: line.unit_price,
+    markup_percent: line.markup_percent,
+    total: line.total,
+    vendor_product_url: line.vendor_product_url,
+    price_verified_at: line.price_verified_at,
+    latestPriceCheck: latestCheckByLine.get(line.id) ?? null,
+  }));
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pb-24">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">{estimate.name}</h1>
         {estimate.project_id && projectName && (
@@ -64,81 +114,94 @@ export default async function EstimatePage({
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             <FolderIcon className="size-4" />
-            {projectName}
+            Project: {projectName}
           </Link>
         )}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Lines</h2>
-          <form action={addBlankLine}>
-            <Button type="submit" size="sm" variant="outline">
-              Add blank line
-            </Button>
-          </form>
-        </div>
-
-        {lines.length > 0 ? (
-          <>
-            <Table>
-              <TableHeader>
-                {/* Header is one colSpan-6 cell wrapping the SAME
-                    grid-cols-6 layout as each body row (EstimateLineRow),
-                    so the labels line up with the input columns. Real <th>
-                    cells wouldn't: every body row is a single colSpan-6 cell
-                    with its own internal grid, so the table's auto column
-                    widths never match. */}
-                <TableRow>
-                  <TableHead colSpan={6} className="p-0">
-                    {/* min-w keeps the columns usable on mobile: the table's
-                        overflow-x-auto container scrolls horizontally instead
-                        of shrinking inputs to nothing. Must match the row
-                        grid's min-w in estimate-line-row.tsx so header and
-                        body stay aligned. */}
-                    <div className="grid min-w-[640px] grid-cols-6 items-center gap-2 p-2 text-muted-foreground">
-                      <span className="col-span-2">Description</span>
-                      <span>Qty</span>
-                      <span>Unit price</span>
-                      <span>Markup %</span>
-                      <span>Total</span>
-                    </div>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.map((line) => (
-                  <EstimateLineRow
-                    // Keying on total (which changes whenever any editable
-                    // field does, via server-side recalculation) forces a
-                    // clean remount instead of an in-place update -- the
-                    // defaultValue-based inputs below need a remount to
-                    // pick up fresh server data without React warning
-                    // about changing an uncontrolled input's default value
-                    // after the fact.
-                    key={`${line.id}-${line.total}`}
-                    line={line}
-                    estimateId={estimateId}
-                  />
-                ))}
-              </TableBody>
-            </Table>
-            <p className="text-right text-sm font-medium">
-              Estimate total: ${grandTotal.toFixed(2)}
+      {draftOverCpaThreshold && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+          <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="text-sm">
+            <p className="font-semibold text-amber-800 dark:text-amber-300">
+              This draft is {draftPctFromRoot.toFixed(1)}% over the original estimate
             </p>
-          </>
+            <p className="text-amber-800/90 dark:text-amber-300/90">
+              Ontario&apos;s Consumer Protection Act requires documented client consent for
+              cost increases of 10% or more. Snapshot a new version below and get it signed
+              as a change order before proceeding.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-4">
+        <h2 className="text-lg font-semibold">Lines</h2>
+
+        <EstimateBuilder
+          estimateId={estimateId}
+          lines={builderLines}
+          grandTotal={grandTotal}
+          projects={projectsData ?? []}
+          removedLines={removedLines}
+        />
+      </div>
+
+      {/* Immutable version history -- the substrate for change orders.
+          Snapshotting freezes the current draft lines; the frozen version
+          diffs itself against its parent. See
+          docs/v2/plans/01-change-orders-plan.md. */}
+      <div className="flex flex-col gap-2 border-t pt-6">
+        <h2 className="text-lg font-semibold">Versions</h2>
+        {versions.length > 0 ? (
+          <ul className="flex flex-col divide-y">
+            {versions.map((v) => (
+              <li key={v.id}>
+                <Link
+                  href={`/estimates/${estimateId}/versions/${v.id}`}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm hover:bg-muted/50"
+                >
+                  <span className="font-medium">Version {v.version_number}</span>
+                  <Badge variant="outline">
+                    {VERSION_STATUS_LABELS[v.status as RawVersionStatus] ?? v.status}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {new Date(v.created_at).toLocaleDateString()}
+                  </span>
+                  <span className="ml-auto flex items-center gap-3">
+                    {v.pct_change_from_root !== null && (
+                      <span
+                        className={
+                          v.pct_change_from_root >= 10
+                            ? "font-medium text-amber-700 dark:text-amber-400"
+                            : "text-muted-foreground"
+                        }
+                      >
+                        {v.pct_change_from_root >= 0 ? "+" : ""}
+                        {v.pct_change_from_root.toFixed(1)}%
+                      </span>
+                    )}
+                    <span className="font-medium">${v.total.toFixed(2)}</span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         ) : (
-          <p className="text-muted-foreground">No lines yet.</p>
-        )}
-
-        {removedLines.length > 0 && (
-          <RemovedLines estimateId={estimateId} lines={removedLines} />
+          <p className="text-sm text-muted-foreground">
+            No versions yet. Snapshot the estimate to freeze version 1 — the baseline any
+            future change order is measured against.
+          </p>
         )}
       </div>
 
-      <div className="border-t pt-6">
-        <HistoricalSearch estimateId={estimateId} />
-      </div>
+      <VersionStatusBar
+        estimateId={estimateId}
+        latestVersion={versions[0] ?? null}
+        nextVersionNumber={(versions[0]?.version_number ?? 0) + 1}
+        grandTotal={grandTotal}
+        draftOverCpaThreshold={draftOverCpaThreshold}
+      />
     </div>
   );
 }

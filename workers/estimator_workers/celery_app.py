@@ -16,6 +16,22 @@ app = Celery("estimator_workers", broker=BROKER_URL)
 # real uptime/traffic to justify dead-connection detection again.
 app.conf.broker_heartbeat = 0
 
+# Periodic sweeps, run by Celery beat. The worker is launched with -B
+# (embedded beat -- fine for a single-worker deployment; split beat into
+# its own process if workers ever scale horizontally, or duplicate sweeps
+# would run). Hourly: the reminder threshold is measured in days, so
+# finer granularity buys nothing.
+app.conf.beat_schedule = {
+    "send-signing-reminders": {
+        "task": "estimator_workers.tasks.send_signing_reminders",
+        "schedule": 3600.0,
+    },
+    "credential-expiry-sweep": {
+        "task": "estimator_workers.tasks.credential_expiry_sweep",
+        "schedule": 3600.0,
+    },
+}
+
 # Explicit import rather than autodiscover_tasks(): autodiscovery is lazy
 # and tied to full worker bootstrap signals, which don't fire in every
 # entry point (e.g. scripts, tests) -- an explicit import always registers

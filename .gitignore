@@ -9,3 +9,6 @@ __pycache__/
 .next/
 .DS_Store
 .playwright-mcp/
+
+# Celery beat runtime state (embedded -B scheduler)
+workers/celerybeat-schedule*

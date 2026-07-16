@@ -30,7 +30,7 @@ Upload document
 | Web app | Next.js (TypeScript) | Frontend + server-side API routes |
 | Async workers | Python + Celery | Extraction pipeline; runs as a separate service |
 | Message broker | RabbitMQ | Chosen over Redis for durable queue semantics and reliable ack/nack in multi-stage pipelines; run managed (e.g. CloudAMQP) |
-| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent`, `ExtractionResult`, and `MaterialMatch`/`MaterialCatalog` (via the `match_materials` task); Next.js owns `Invoice`, `LineItem`, `Estimate`/`EstimateLine`, and `Document.status` transitions (worker writes the terminal `failed` and `rejected` statuses) |
+| Database | Postgres via Supabase | Shared Postgres, table-level write ownership split: worker owns `DocumentProcessingEvent`, `ExtractionResult`, `MaterialMatch`/`MaterialCatalog` (via the `match_materials` task), and `EstimateVersion.pdf_storage_path` (via the `render_change_order_pdf` task); Next.js owns `Invoice`, `LineItem`, `Estimate`/`EstimateLine`, `EstimateVersion`/`EstimateVersionLine`/`EstimateSignature`/`ClientSigningToken`, and `Document.status` transitions (worker writes the terminal `failed` and `rejected` statuses) |
 | File storage | Supabase Storage | S3-compatible; used for original documents; avoids a second storage vendor |
 | Extraction & matching | Claude (`claude-sonnet-5`), via Anthropic's API | One vision call per document for extraction (`workers/estimator_workers/extraction.py`); one batched text call per confirmed invoice for material matching (`workers/estimator_workers/matching.py`) |
 
@@ -47,6 +47,8 @@ All data is company-scoped; there is no cross-company sharing in MVP (see `mvp/p
 - **Next.js API routes:** scope all queries by the authenticated user's `company_id` in addition to relying on RLS — defense in depth, not a substitute for it.
 
 **Exception:** `Supplier` is a deliberate, global, non-company-scoped table — see Data Model below. It carries no `company_id` and is intentionally outside RLS. Anything company-specific about a supplier relationship lives on `CompanySupplier`, which is company-scoped like everything else.
+
+**Exception (v2, change orders):** the public client-signing page (`/sign/[token]`, `web/src/app/sign/`) is the one surface with no session at all — clients are not users. Authorization is the 256-bit single-use signing token in the URL itself (stored only as a hash; see `ClientSigningToken` in `data_model.md`). Because no RLS identity exists for a signing client, that page and its action (`web/src/app/actions/client-signing.ts`) run through the server-side admin client, keyed strictly off the token row's own ids — there are deliberately **no anon RLS policies** anywhere. The middleware allowlists `/sign` without bouncing signed-in users (`TOKEN_AUTHORIZED_PATHS`, `web/src/lib/supabase/middleware.ts`). Relatedly, `estimate_signatures` narrows the usual blanket `for all` company policy to select+insert only — a signed change order is a legal artifact no session may alter (see `0017_signatures.sql`).
 
 ---
 

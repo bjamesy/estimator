@@ -1,0 +1,16 @@
+-- Rendered change-order PDF, the legal artifact of an executed version.
+-- See docs/v2/plans/01-change-orders-plan.md -> Phase 4.
+--
+-- The PDF is deterministically derived from the version's immutable rows
+-- (estimate_versions + estimate_version_lines + estimate_signatures), so
+-- structured data remains the source for search/filtering and the file
+-- can always be regenerated. Rendered by the render_change_order_pdf
+-- Celery task after execution; stored in the documents bucket under
+-- {company_id}/change-orders/{version_id}.pdf, which the existing
+-- company-prefix storage policy (0005) already scopes correctly.
+--
+-- Nullable: versions that never execute (draft/superseded) have no legal
+-- artifact, and an executed version is briefly null while the render
+-- task runs (or if publish failed -- the version page offers a manual
+-- "Generate PDF" retry).
+alter table estimate_versions add column pdf_storage_path text;

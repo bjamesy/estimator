@@ -101,32 +101,35 @@ export async function createEstimateFromProject(
   return seedEstimateFromProject(projectId, name);
 }
 
-// Bulk-seeds a new estimate from a project's own confirmed purchase
-// history, instead of manually searching+adding one line at a time
-// (addHistoricalLineToEstimate). For each canonical material used on
-// the project (grouped via a "proposed" MaterialMatch -- a "flagged"
-// match's grouping isn't trustworthy, so those are treated like an
-// unmatched line item instead of aggregated), seeds up to two lines:
-// the total quantity at the weighted-average price actually paid on
-// this project, and -- only if it differs -- a second line at the same
-// quantity but priced at the most recent company-wide purchase of that
-// material (any project/supplier). Line items with no trustworthy
-// match are seeded individually at their own price, with no comparison
-// line (there's no canonical material to look one up by). The user
-// reviews the result on the normal estimate page and deletes/edits
-// whichever lines they don't want -- that review *is* the approval,
-// there's no separate staging step or approved status. Redirects to the
-// new estimate on success; returns { error } on failure.
-async function seedEstimateFromProject(
-  projectId: string,
-  name: string,
-): Promise<{ error: string }> {
-  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
-  if (companyError !== null) {
-    return { error: companyError };
-  }
-  const supabase = await createClient();
+type SeedRow = {
+  company_id: string;
+  source_line_item_id: string | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  markup_percent: number;
+  total: number;
+};
 
+// Computes the same "seed rows from a project's purchase history" that
+// both seedEstimateFromProject (new estimate) and importProjectIntoEstimate
+// (append to an existing draft) insert -- one seeding computation, two
+// entry points, so the matching logic never drifts between them. For each
+// canonical material used on the project (grouped via a "proposed"
+// MaterialMatch -- a "flagged" match's grouping isn't trustworthy, so
+// those are treated like an unmatched line item instead of aggregated),
+// produces up to two rows: the total quantity at the weighted-average
+// price actually paid on this project, and -- only if it differs -- a
+// second row at the same quantity but priced at the most recent
+// company-wide purchase of that material (any project/supplier). Line
+// items with no trustworthy match are seeded individually at their own
+// price, with no comparison row (there's no canonical material to look one
+// up by). Returns { error } if the project doesn't belong to this company.
+async function buildProjectSeedRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  companyId: string,
+  projectId: string,
+): Promise<{ error: string } | { rows: SeedRow[] }> {
   const { data: project } = await supabase
     .from("projects")
     .select("id")
@@ -222,34 +225,11 @@ async function seedEstimateFromProject(
     }
   }
 
-  const { data: estimate, error: estimateError } = await supabase
-    .from("estimates")
-    .insert({ project_id: projectId, company_id: companyId, name })
-    .select("id")
-    .single();
-
-  if (estimateError?.code === POSTGRES_UNIQUE_VIOLATION) {
-    return { error: duplicateNameError(name, true) };
-  }
-  if (estimateError) {
-    return { error: estimateError.message };
-  }
-
-  const rows: {
-    estimate_id: string;
-    company_id: string;
-    source_line_item_id: string | null;
-    description: string;
-    quantity: number;
-    unit_price: number;
-    markup_percent: number;
-    total: number;
-  }[] = [];
+  const rows: SeedRow[] = [];
 
   for (const [materialId, group] of matchedGroups) {
     const avgPrice = group.weightedPriceSum / group.totalQuantity;
     rows.push({
-      estimate_id: estimate.id,
       company_id: companyId,
       source_line_item_id: null,
       description: group.name,
@@ -262,7 +242,6 @@ async function seedEstimateFromProject(
     const latest = latestByMaterial.get(materialId);
     if (latest && Math.abs(latest.price - avgPrice) > 0.0001) {
       rows.push({
-        estimate_id: estimate.id,
         company_id: companyId,
         source_line_item_id: null,
         description: `${group.name} (updated price)`,
@@ -276,7 +255,6 @@ async function seedEstimateFromProject(
 
   for (const item of unmatchedItems) {
     rows.push({
-      estimate_id: estimate.id,
       company_id: companyId,
       source_line_item_id: item.id,
       description: item.description,
@@ -287,8 +265,48 @@ async function seedEstimateFromProject(
     });
   }
 
-  if (rows.length > 0) {
-    const { error: linesError } = await supabase.from("estimate_lines").insert(rows);
+  return { rows };
+}
+
+// Bulk-seeds a new estimate from a project's own confirmed purchase
+// history, instead of manually searching+adding one line at a time
+// (addHistoricalLineToEstimate). See buildProjectSeedRows for the matching
+// logic. The user reviews the result on the normal estimate page and
+// deletes/edits whichever lines they don't want -- that review *is* the
+// approval, there's no separate staging step or approved status. Redirects
+// to the new estimate on success; returns { error } on failure.
+async function seedEstimateFromProject(
+  projectId: string,
+  name: string,
+): Promise<{ error: string }> {
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const seeded = await buildProjectSeedRows(supabase, companyId, projectId);
+  if ("error" in seeded) {
+    return seeded;
+  }
+
+  const { data: estimate, error: estimateError } = await supabase
+    .from("estimates")
+    .insert({ project_id: projectId, company_id: companyId, name })
+    .select("id")
+    .single();
+
+  if (estimateError?.code === POSTGRES_UNIQUE_VIOLATION) {
+    return { error: duplicateNameError(name, true) };
+  }
+  if (estimateError) {
+    return { error: estimateError.message };
+  }
+
+  if (seeded.rows.length > 0) {
+    const { error: linesError } = await supabase.from("estimate_lines").insert(
+      seeded.rows.map((row) => ({ ...row, estimate_id: estimate.id })),
+    );
     if (linesError) {
       return { error: `Estimate created, but failed to seed lines: ${linesError.message}` };
     }
@@ -297,6 +315,45 @@ async function seedEstimateFromProject(
   revalidatePath("/estimates");
   revalidatePath(`/projects/${projectId}`);
   redirect(`/estimates/${estimate.id}`);
+}
+
+// Appends a project's seeded purchase-history rows to an *existing* draft
+// estimate, rather than only at creation -- the builder panel's "Import
+// from project" tool. Same matching computation as seedEstimateFromProject
+// (buildProjectSeedRows), just inserted against an estimate that already
+// exists instead of a brand-new one. Additive: never touches lines already
+// on the draft.
+export async function importProjectIntoEstimate(
+  estimateId: string,
+  projectId: string,
+): Promise<{ error: string | null; importedCount?: number }> {
+  const { companyId, error: companyError } = await tryGetCurrentCompanyId();
+  if (companyError !== null) {
+    return { error: companyError };
+  }
+  const supabase = await createClient();
+
+  const ownershipError = await assertEstimateOwnership(supabase, estimateId, companyId);
+  if (ownershipError) {
+    return { error: ownershipError };
+  }
+
+  const seeded = await buildProjectSeedRows(supabase, companyId, projectId);
+  if ("error" in seeded) {
+    return { error: seeded.error };
+  }
+
+  if (seeded.rows.length > 0) {
+    const { error: linesError } = await supabase.from("estimate_lines").insert(
+      seeded.rows.map((row) => ({ ...row, estimate_id: estimateId })),
+    );
+    if (linesError) {
+      return { error: linesError.message };
+    }
+  }
+
+  revalidatePath(`/estimates/${estimateId}`);
+  return { error: null, importedCount: seeded.rows.length };
 }
 
 // Snapshot, not a live reference -- source_line_item_id is provenance
