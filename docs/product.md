@@ -74,35 +74,54 @@ drifted from what the estimate used. Never auto-substitutes — it only flags
 ("confirmed" / "changed" / "unverifiable") and lets the contractor manually
 decide whether to update the line.
 
-**This is the least reliable part of the product today** (see investigation
-notes below). Treat any "changed" result with skepticism until the known
-issues are addressed.
+**Conclusion as of 2026-07-16: none of the three allowlisted vendors can be
+reliably price-checked with the current fetch-based architecture.** This
+isn't a per-vendor parser gap — it's a structural ceiling. Spot-checked all
+three with a real product URL each (`workers/scripts/dump_vendor_page.py`,
+which exercises the exact `fetch_page`/`extract_price` path the real Celery
+task uses):
 
-### Known issues (found 2026-07-14, not yet fixed)
+| Vendor | Fetch success rate | Price data when fetch succeeds |
+|---|---|---|
+| Home Hardware | Usually succeeds | Present, but **wrong** — a generic list price, not the store-specific price a real buyer sees (see below) |
+| Home Depot | ~1 in 4 (3 of 4 attempts: timeout, timeout, connection reset) | **None at all** — 554KB of HTML, zero price data anywhere (no JSON-LD, no meta tags, no embedded JSON); fully client-rendered |
+| Rona | **0 of 4** — every attempt hit the same Cloudflare "Just a moment…" managed challenge, instant 403 | N/A, page never loads |
 
 - **No live update.** The check runs async via Celery; the estimate page is
   server-rendered and has no polling/realtime subscription, so the result
   only appears after a manual page refresh.
-- **Cloudflare bot walls.** At least Home Hardware intermittently serves a
-  Cloudflare "managed challenge" page instead of real content to the
-  fetcher, with no retry — that check silently comes back `unverifiable`.
-- **Store-specific pricing isn't reachable at all.** Home Hardware's raw
-  server-rendered HTML only contains a generic national "List" price — the
-  real, store-specific price is fetched by client-side JavaScript after page
-  load, resolved via Cloudflare edge geolocation (no cookie needed, just
-  request IP). A plain HTTP fetch never triggers that call, so it can only
-  ever see the (possibly wrong) list price. Fixing this would require
-  headless-browser JS execution *and* solve a second problem — the
+- **Cloudflare bot walls block two of three vendors outright.** Rona
+  deterministically (100% of attempts); Home Depot non-deterministically
+  (times out or resets the connection ~75% of the time) — different
+  anti-bot posture, same practical result.
+- **Home Hardware's data is present but wrong, not just occasionally
+  missing.** Its raw server-rendered HTML only contains a generic national
+  "List" price — the real, store-specific price is fetched by client-side
+  JavaScript after page load, resolved via Cloudflare edge geolocation (no
+  cookie needed, just request IP). A plain HTTP fetch never triggers that
+  call, so it can only ever see the (wrong) list price. Fixing this would
+  require headless-browser JS execution *and* solve a second problem — the
   resolved store would be based on our server's IP, not the contractor's,
-  so it could easily surface a different store's price entirely. There's no
-  clean fix under the current data model (no "which store do you buy from"
-  field exists).
-- Home Depot and Rona haven't been spot-checked yet for the same issues —
-  don't assume they're clean.
-- The original spec's "reliable verification" premise may not hold for any
-  of the three allowlisted vendors. Revisit before investing further here —
-  see the open question in `docs/v2/plans/00-roadmap.md` on deferred option
-  (b) (periodic re-checks while pending).
+  so it could easily surface a different store's price entirely. No clean
+  fix under the current data model (no "which store do you buy from" field
+  exists).
+- **Escalating to a headless browser to force past the Cloudflare
+  challenges is off the table.** That crosses from "polite, low-frequency
+  spot-check" into deliberate bot-detection evasion, which the original
+  spec itself calls out as a risk to respect, not defeat.
+- **This settles the deferred option (b)** (periodic re-checks while an
+  estimate is pending, `docs/v2/plans/00-roadmap.md`) — building automated
+  recurring checks on top of a fetch that fails outright 75–100% of the
+  time, and returns a wrong number the one vendor where it does work, would
+  make the feature actively worse, not more useful. Not worth building.
+- **Recommendation:** narrow the feature to what a fetch can honestly do —
+  either drop automated fetching entirely in favor of a manual "I checked
+  the vendor, here's the price I saw" entry (contractor does the looking,
+  system just timestamps it for the audit trail), or keep the fetch as a
+  best-effort convenience but strip any implication that "confirmed"/
+  "changed" is authoritative. Building more per-vendor extraction logic on
+  the current approach is not worth it — the ceiling is fetch reliability
+  and JS-rendered pricing, not parser quality.
 
 ## Not built yet
 
