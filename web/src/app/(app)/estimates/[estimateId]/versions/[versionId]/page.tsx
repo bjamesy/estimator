@@ -1,4 +1,9 @@
-import { ArrowLeftIcon, CheckCircle2Icon, FileDownIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CheckCircle2Icon,
+  FileDownIcon,
+  FileSpreadsheetIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -131,7 +136,17 @@ export default async function EstimateVersionPage({
             <CheckCircle2Icon className="size-5 shrink-0" />
             Executed — signed by both parties. This document and its signatures are locked.
           </span>
-          <span className="ml-auto">
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {/* CSV is always available on an executed version -- it's built
+                on the fly from the frozen line items and doesn't depend on
+                the worker-rendered PDF existing yet. */}
+            <a
+              href={`/estimates/${estimateId}/versions/${versionId}/export`}
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-600/40 px-2.5 py-1 text-xs font-medium hover:bg-emerald-500/20"
+            >
+              <FileSpreadsheetIcon className="size-3.5" />
+              Download CSV
+            </a>
             {pdfUrl ? (
               <a
                 href={pdfUrl}
