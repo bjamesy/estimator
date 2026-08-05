@@ -34,7 +34,7 @@ export default async function EstimatePage({
   const { data: allLines } = await supabase
     .from("estimate_lines")
     .select(
-      "id, description, quantity, unit_price, markup_percent, total, deleted_at, vendor_product_url, price_verified_at",
+      "id, description, quantity, unit_price, markup_percent, total, deleted_at, vendor_product_url, price_verified_at, material_id",
     )
     .eq("estimate_id", estimateId)
     .order("created_at", { ascending: true });
@@ -101,6 +101,7 @@ export default async function EstimatePage({
     total: line.total,
     vendor_product_url: line.vendor_product_url,
     price_verified_at: line.price_verified_at,
+    material_id: line.material_id,
     latestPriceCheck: latestCheckByLine.get(line.id) ?? null,
   }));
 

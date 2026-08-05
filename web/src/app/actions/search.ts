@@ -9,6 +9,7 @@ export type SearchResult = {
   quantity: number;
   unit_price: number;
   total: number;
+  material_id: string | null;
   material_name: string | null;
   project_id: string;
   project_name: string;
