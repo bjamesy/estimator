@@ -57,8 +57,11 @@ export function BuilderPanel({
         // Remount on save so the defaultValue-based inputs pick up fresh
         // server data without React warning about an uncontrolled input's
         // default changing after the fact -- same trick the old inline row
-        // editor used.
-        key={`${selectedLine.id}-${selectedLine.total}-${selectedLine.vendor_product_url ?? ""}-${selectedLine.material_id ?? ""}`}
+        // editor used. description is in the key (not just total) because
+        // a description-only edit (e.g. right after detaching from the
+        // catalog) leaves total unchanged, so without it the key would
+        // stay identical and the warning would fire on exactly that edit.
+        key={`${selectedLine.id}-${selectedLine.total}-${selectedLine.description}-${selectedLine.vendor_product_url ?? ""}-${selectedLine.material_id ?? ""}`}
         estimateId={estimateId}
         line={selectedLine}
         latestPriceCheck={latestPriceCheck}
