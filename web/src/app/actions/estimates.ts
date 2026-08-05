@@ -104,6 +104,7 @@ export async function createEstimateFromProject(
 type SeedRow = {
   company_id: string;
   source_line_item_id: string | null;
+  material_id: string | null;
   description: string;
   quantity: number;
   unit_price: number;
@@ -232,6 +233,7 @@ async function buildProjectSeedRows(
     rows.push({
       company_id: companyId,
       source_line_item_id: null,
+      material_id: materialId,
       description: group.name,
       quantity: group.totalQuantity,
       unit_price: avgPrice,
@@ -244,6 +246,7 @@ async function buildProjectSeedRows(
       rows.push({
         company_id: companyId,
         source_line_item_id: null,
+        material_id: materialId,
         description: `${group.name} (updated price)`,
         quantity: group.totalQuantity,
         unit_price: latest.price,
@@ -257,6 +260,7 @@ async function buildProjectSeedRows(
     rows.push({
       company_id: companyId,
       source_line_item_id: item.id,
+      material_id: null,
       description: item.description,
       quantity: item.quantity,
       unit_price: item.unit_price,
@@ -358,12 +362,20 @@ export async function importProjectIntoEstimate(
 
 // Snapshot, not a live reference -- source_line_item_id is provenance
 // only. See docs/architecture.md -> Estimate-building data flow.
+//
+// materialId (when the source line item has a trustworthy 'proposed'
+// match, per searchLineItems/search_line_items) links this line to the
+// canonical MaterialCatalog entry, same as buildProjectSeedRows already
+// does for the bulk "import from project" path -- this is what keeps the
+// two "add from history" paths from disagreeing on canonical vs. raw
+// invoice-text description for the same real material.
 export async function addHistoricalLineToEstimate(
   estimateId: string,
   sourceLineItemId: string,
   description: string,
   quantity: number,
   unitPrice: number,
+  materialId: string | null,
 ): Promise<{ error: string | null }> {
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
   if (companyError !== null) {
@@ -376,10 +388,27 @@ export async function addHistoricalLineToEstimate(
     return { error: ownershipError };
   }
 
+  // Same rationale as assertEstimateOwnership above: this is a directly
+  // invocable Server Action, not gated behind the UI that normally
+  // supplies a same-company materialId (from searchLineItems, itself
+  // RLS-scoped).
+  if (materialId) {
+    const { data: material } = await supabase
+      .from("material_catalog")
+      .select("id")
+      .eq("id", materialId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (!material) {
+      return { error: "Material not found." };
+    }
+  }
+
   const { error } = await supabase.from("estimate_lines").insert({
     estimate_id: estimateId,
     company_id: companyId,
     source_line_item_id: sourceLineItemId,
+    material_id: materialId,
     description,
     quantity,
     unit_price: unitPrice,
@@ -442,15 +471,59 @@ export async function updateEstimateLine(
   }
 
   const supabase = await createClient();
+
+  // A catalog-linked line's description can only change via the explicit
+  // detachEstimateLineMaterial action below, even if this is invoked
+  // directly rather than through the (readOnly-rendered) form -- this is a
+  // plain exported Server Action, not gated behind the UI's field lock.
+  const { data: current } = await supabase
+    .from("estimate_lines")
+    .select("material_id")
+    .eq("id", lineId)
+    .maybeSingle();
+
+  const update: {
+    description?: string;
+    quantity: number;
+    unit_price: number;
+    markup_percent: number;
+    total: number;
+  } = {
+    quantity,
+    unit_price: unitPrice,
+    markup_percent: markupPercent,
+    total: computeTotal(quantity, unitPrice, markupPercent),
+  };
+  if (!current?.material_id) {
+    update.description = description;
+  }
+
+  const { error } = await supabase.from("estimate_lines").update(update).eq("id", lineId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath(`/estimates/${estimateId}`);
+  return { error: null };
+}
+
+// Clears the catalog link without touching quantity/price/description --
+// the explicit, reversible action that turns Description from a locked
+// catalog-linked field back into a freely-editable one. Mirrors
+// flagMaterialMatch/unflagMaterialMatch's shape (app/actions/materials.ts):
+// an explicit action, not silent. Leaves the description text as-is --
+// detaching breaks the link, it doesn't revert the wording. No ownership
+// check needed, same as deleteEstimateLine/restoreEstimateLine below --
+// RLS's company-access policy already scopes the update.
+export async function detachEstimateLineMaterial(
+  lineId: string,
+  estimateId: string,
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
   const { error } = await supabase
     .from("estimate_lines")
-    .update({
-      description,
-      quantity,
-      unit_price: unitPrice,
-      markup_percent: markupPercent,
-      total: computeTotal(quantity, unitPrice, markupPercent),
-    })
+    .update({ material_id: null })
     .eq("id", lineId);
 
   if (error) {

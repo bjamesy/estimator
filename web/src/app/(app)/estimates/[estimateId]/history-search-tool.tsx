@@ -29,12 +29,17 @@ export function HistorySearchTool({ estimateId }: { estimateId: string }) {
 
   async function handleAdd(result: SearchResult) {
     setAddingId(result.line_item_id);
+    // Prefer the canonical catalog name over the raw invoice text when a
+    // trustworthy match exists, so this path stops disagreeing with
+    // buildProjectSeedRows (the "import from project" path), which has
+    // always used the canonical name.
     await addHistoricalLineToEstimate(
       estimateId,
       result.line_item_id,
-      result.description,
+      result.material_name ?? result.description,
       result.quantity,
       result.unit_price,
+      result.material_id,
     );
     setAddingId(null);
   }

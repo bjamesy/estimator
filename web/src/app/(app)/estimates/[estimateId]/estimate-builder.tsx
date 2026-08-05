@@ -18,6 +18,7 @@ export type BuilderLine = {
   total: number;
   vendor_product_url: string | null;
   price_verified_at: string | null;
+  material_id: string | null;
   latestPriceCheck: PriceCheck | null;
 };
 

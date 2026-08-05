@@ -27,6 +27,7 @@ Plain, numbered SQL files in `migrations/`, applied in order:
 19. `0019_notifications.sql` — adds `client_email` and `reminder_sent_at` to `client_signing_tokens` for signing-link emails and the one-reminder-per-chain sweep
 20. `0020_credentials.sql` — `credentials` table (WSIB / liability insurance / business registration certificates on file, with extraction, expiry tracking, and supersede-on-renewal)
 21. `0021_vendor_price_check.sql` — `vendor_price_checks` history table plus `vendor_product_url`/`price_verified_at` on estimate lines (and `price_verified_at` on version lines) for vendor price spot-checks
+22. `0022_estimate_line_material_id.sql` — adds `estimate_lines.material_id` (nullable FK to `material_catalog`, forward-only, not backfilled) and fixes `search_line_items` to also return `material_id` and to stop surfacing `material_name`/`material_id` for a `flagged` match — see `docs/data_model.md` → EstimateLine
 
 ## Applying to a Supabase project
 

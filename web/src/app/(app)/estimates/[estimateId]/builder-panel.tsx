@@ -3,9 +3,15 @@
 import { useActionState, useRef, useTransition } from "react";
 import { toast } from "sonner";
 
-import { addBlankEstimateLine, deleteEstimateLine, updateEstimateLine } from "@/app/actions/estimates";
+import {
+  addBlankEstimateLine,
+  deleteEstimateLine,
+  detachEstimateLineMaterial,
+  updateEstimateLine,
+} from "@/app/actions/estimates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 import { HistorySearchTool } from "./history-search-tool";
 import { ImportProjectTool } from "./import-project-tool";
@@ -23,6 +29,7 @@ export type SelectedLine = {
   total: number;
   vendor_product_url: string | null;
   price_verified_at: string | null;
+  material_id: string | null;
 };
 
 // The periphery: everything that changes the draft happens here, never in
@@ -51,7 +58,7 @@ export function BuilderPanel({
         // server data without React warning about an uncontrolled input's
         // default changing after the fact -- same trick the old inline row
         // editor used.
-        key={`${selectedLine.id}-${selectedLine.total}-${selectedLine.vendor_product_url ?? ""}`}
+        key={`${selectedLine.id}-${selectedLine.total}-${selectedLine.vendor_product_url ?? ""}-${selectedLine.material_id ?? ""}`}
         estimateId={estimateId}
         line={selectedLine}
         latestPriceCheck={latestPriceCheck}
@@ -109,6 +116,8 @@ function EditLinePanel({
   const [state, formAction, pending] = useActionState(updateAction, null);
   const formRef = useRef<HTMLFormElement>(null);
   const [deleting, startDeleting] = useTransition();
+  const [detaching, startDetaching] = useTransition();
+  const linked = line.material_id !== null;
 
   // Autosaves once focus leaves the form entirely (same behavior as the
   // old inline row editor) -- e.relatedTarget is the element about to
@@ -131,8 +140,37 @@ function EditLinePanel({
 
       <form ref={formRef} action={formAction} onBlur={handleBlur} className="flex flex-col gap-3">
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Description
-          <Input name="description" defaultValue={line.description} />
+          <span className="flex items-center justify-between">
+            Description
+            {linked && (
+              <button
+                type="button"
+                className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                disabled={detaching}
+                onClick={() =>
+                  startDetaching(async () => {
+                    const { error } = await detachEstimateLineMaterial(line.id, estimateId);
+                    if (error) {
+                      toast.error("Couldn't detach", { description: error });
+                      return;
+                    }
+                    toast.success("Detached from catalog");
+                  })
+                }
+              >
+                {detaching ? "Detaching…" : "Detach from catalog"}
+              </button>
+            )}
+          </span>
+          {/* readOnly, not disabled -- a disabled input is excluded from
+              FormData on submit, which would fail the !description check
+              in updateEstimateLine on every autosave of a locked line. */}
+          <Input
+            name="description"
+            defaultValue={line.description}
+            readOnly={linked}
+            className={cn(linked && "cursor-not-allowed bg-muted/50 text-muted-foreground")}
+          />
         </label>
         <div className="grid grid-cols-3 gap-2">
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">

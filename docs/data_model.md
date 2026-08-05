@@ -182,6 +182,8 @@ MaterialMatch
 
 Join table between `LineItem` and `MaterialCatalog`. Matching runs after user confirmation, not during extraction — the system auto-proposes a match, and the user can flag it wrong. Flagging is reversible: an "Undo flag" action (`unflagMaterialMatch`, `web/src/app/actions/materials.ts`) sets `status` back to `proposed`, restoring the match to the accepted grouping that material aggregation and estimate seeding count. Flag/unflag is independent metadata on the relationship; it never changes `Document.status`, the `LineItem` record, or the original document.
 
+`search_line_items` (0022) only surfaces a `LineItem`'s `material_name`/`material_id` when its match is `proposed` — a `flagged` line item still appears in search results (never dropped), just with no material name, same as if it had no match at all. Consistent with the existing principle elsewhere (`buildProjectSeedRows`) that a flagged match's grouping isn't trustworthy enough to aggregate or link against.
+
 ---
 
 ## Supplier
@@ -262,7 +264,12 @@ EstimateLine
   estimate_id          FK → Estimate
   company_id           FK → Company
   source_line_item_id  FK → LineItem, nullable — provenance only, never re-read after creation
-  description          text — copied from the source LineItem, or entered manually if source_line_item_id is null
+  material_id           FK → MaterialCatalog, nullable — set when this line's canonical name is
+                         known (0022); ON DELETE SET NULL, same provenance-only treatment as
+                         source_line_item_id
+  description          text — the catalog's canonical name when material_id is set (and locked
+                         against editing while it is — see below); otherwise copied from the
+                         source LineItem or entered manually
   quantity
   unit_price
   markup_percent        default 0
@@ -275,6 +282,10 @@ EstimateLine
 ```
 
 A snapshot, not a live reference. See `architecture.md` → Open Questions → Estimate-building data flow for why: pulling in a historical `LineItem` copies its data into a new `EstimateLine`; editing the estimate line afterward never touches the source, and the source's original invoice/document is unaffected by anything that happens in an estimate built from it.
+
+**`material_id` links a line to its canonical material (0022_estimate_line_material_id.sql).** Set by both "add a line from history" paths — `buildProjectSeedRows` (bulk "import from project") and `addHistoricalLineToEstimate` (single-line "Add from history" search) — whenever the source `LineItem` has a trustworthy (`proposed`, not `flagged`) `MaterialMatch`; `addBlankEstimateLine` never sets it. While `material_id` is set, `description` is locked: `updateEstimateLine` silently drops any submitted `description` change (enforced server-side, not just in the UI, since this is a plain exported Server Action) until the line is explicitly detached via `detachEstimateLineMaterial`, which clears `material_id` and leaves the text as-is — an explicit, reversible action, mirroring `flagMaterialMatch`/`unflagMaterialMatch`'s shape, never silent. This exists because the two add-paths used to disagree on canonical vs. raw invoice-text wording for the same real material, and even a correctly-seeded line could drift right back into free text on the next edit — undermining the whole point of the `MaterialCatalog` matching pipeline at the one place (`EstimateLine`) that's actually client- and export-facing.
+
+**Forward-only, not backfilled.** Existing lines (added before 0022) are left with `material_id = null` — this does not mean "no canonical material exists for this line," only "not linked." A real backfill isn't reliably possible for lines seeded via project-import: those rows are aggregated across multiple purchases (`source_line_item_id` is null), so there's no FK path back to a catalog entry, only a fuzzy text match the app deliberately avoids elsewhere. If two pre-0022 lines are duplicates of the same material, fixing it today means deleting one and re-adding it through either add-path.
 
 **Removing a line is a soft delete** (`0015_estimate_line_soft_delete.sql`). `deleteEstimateLine` sets `deleted_at` instead of dropping the row; `restoreEstimateLine` clears it. A tombstoned line is retained and shown struck-through under "Removed lines" with a Restore button, but is excluded from the estimate total and any export — both count only rows where `deleted_at is null`. Newly inserted lines are always active (`deleted_at` null).
 
