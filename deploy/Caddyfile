@@ -1,0 +1,5 @@
+# Reverse proxy + automatic Let's Encrypt TLS. Swap your-domain.com for the
+# real domain before the first deploy -- see docs/deployment.md.
+your-domain.com {
+    reverse_proxy web:3000
+}
