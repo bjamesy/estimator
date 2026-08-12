@@ -1,0 +1,31 @@
+# Production image. Dockerfile (no suffix) stays the dev image (npm run
+# dev, source bind-mounted for hot reload) -- this is a separate,
+# multi-stage build producing a slim runtime, used only by
+# docker-compose.prod.yml. See docs/deployment.md.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+# Next.js on Alpine needs this for some native dependencies (matches the
+# dev Dockerfile).
+RUN apk add --no-cache libc6-compat
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# output: "standalone" (next.config.ts) makes this produce a minimal
+# .next/standalone runtime instead of requiring the full node_modules
+# tree below.
+RUN npm run build
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+RUN apk add --no-cache libc6-compat
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+EXPOSE 3000
+CMD ["node", "server.js"]

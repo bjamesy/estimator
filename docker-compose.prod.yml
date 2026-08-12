@@ -1,0 +1,41 @@
+# Production stack -- see docs/deployment.md. Deliberately separate from
+# docker-compose.yml (the dev stack), not an override of it: dev
+# intentionally points at a local throwaway RabbitMQ to avoid burning
+# CloudAMQP quota (see that file's own comment), builds web with the dev
+# Dockerfile (npm run dev, source bind-mounted), and has no reverse
+# proxy/TLS. None of that applies here -- this file uses the real
+# CloudAMQP URL and Supabase project via each service's own env file, a
+# production Next.js build (Dockerfile.prod), and Caddy for TLS.
+#
+# web/.env.production and workers/.env.production are created directly
+# on the server, never committed -- see docs/deployment.md for exactly
+# what each needs.
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.prod
+    env_file:
+      - ./web/.env.production
+    restart: unless-stopped
+
+  workers:
+    build: ./workers
+    env_file:
+      - ./workers/.env.production
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    restart: unless-stopped
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
