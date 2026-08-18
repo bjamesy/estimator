@@ -15,6 +15,13 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile.prod
+      # NEXT_PUBLIC_* vars are inlined into the client bundle at build
+      # time -- env_file below only affects the running container, not
+      # this build step. Export these two in the shell (or a root .env
+      # file Compose reads automatically) before `docker compose build`.
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
     env_file:
       - ./web/.env.production
     restart: unless-stopped
