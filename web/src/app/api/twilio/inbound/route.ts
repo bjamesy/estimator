@@ -22,6 +22,21 @@ function twiml(message: string): Response {
   });
 }
 
+// No <Message> -- Twilio sends nothing back to the sender. Used once a
+// phone number is already past the rate limit and has had its one
+// warning; this is what keeps a flood of spam texts from costing a
+// Twilio reply (or an LLM call) per message.
+function silentTwiml(): Response {
+  const response = new twilioSdk.twiml.MessagingResponse();
+  return new Response(response.toString(), {
+    status: 200,
+    headers: { "Content-Type": "text/xml" },
+  });
+}
+
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const RATE_LIMIT_MAX_PER_HOUR = 20;
+
 function extensionForMimeType(mimeType: string): string {
   switch (mimeType) {
     case "application/pdf":
@@ -60,6 +75,27 @@ export async function POST(request: Request): Promise<Response> {
   const numMedia = Number(params.NumMedia ?? "0");
 
   const admin = createAdminClient();
+
+  // Applies uniformly to every inbound hit -- registered or not, media
+  // or not -- before any other work happens, so it bounds both Twilio
+  // reply cost and (by blocking processing entirely once over the cap)
+  // Anthropic vision-LLM cost. See database/migrations/0024_sms_rate_limit.sql.
+  await admin.from("sms_inbound_log").insert({ phone_number: from });
+  const { count: recentCount } = await admin
+    .from("sms_inbound_log")
+    .select("id", { count: "exact", head: true })
+    .eq("phone_number", from)
+    .gte("created_at", new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString());
+
+  if ((recentCount ?? 0) > RATE_LIMIT_MAX_PER_HOUR + 1) {
+    // Already warned once this window -- go silent.
+    return silentTwiml();
+  }
+  if ((recentCount ?? 0) === RATE_LIMIT_MAX_PER_HOUR + 1) {
+    // The message that just tipped it over -- warn exactly once.
+    return twiml("You've sent a lot of messages recently. Try again in about an hour.");
+  }
+
   const { data: registered } = await admin
     .from("company_phone_numbers")
     .select("company_id")
@@ -127,6 +163,7 @@ export async function POST(request: Request): Promise<Response> {
         storage_path: storagePath,
         status: "pending",
         content_hash: contentHash,
+        sms_sender_phone: from,
       })
       .select("id")
       .single();
