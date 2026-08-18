@@ -20,17 +20,30 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // All readable under RLS (company-scoped). Refetched per navigation, so a
   // newly created project/estimate appears after its revalidatePath.
   const supabase = await createClient();
-  const [{ data: userData }, { data: company }, { data: projects }, { data: estimates }] =
-    await Promise.all([
-      supabase.auth.getUser(),
-      supabase.from("companies").select("name").eq("id", companyId).maybeSingle(),
-      supabase.from("projects").select("id, name").order("created_at", { ascending: false }),
-      supabase.from("estimates").select("id, name").order("created_at", { ascending: false }),
-    ]);
+  const [
+    { data: userData },
+    { data: company },
+    { data: projects },
+    { data: estimates },
+    { data: phoneNumber },
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.from("companies").select("name").eq("id", companyId).maybeSingle(),
+    supabase.from("projects").select("id, name").order("created_at", { ascending: false }),
+    supabase.from("estimates").select("id, name").order("created_at", { ascending: false }),
+    // Drives the SMS-intake onboarding banner (app-shell.tsx) -- shown on
+    // every page until the company has at least one verified number.
+    supabase.from("company_phone_numbers").select("id").limit(1).maybeSingle(),
+  ]);
   const account = company?.name ?? userData.user?.email ?? null;
 
   return (
-    <AppShell account={account} projects={projects ?? []} estimates={estimates ?? []}>
+    <AppShell
+      account={account}
+      projects={projects ?? []}
+      estimates={estimates ?? []}
+      hasVerifiedPhone={phoneNumber !== null}
+    >
       {children}
     </AppShell>
   );

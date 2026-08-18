@@ -56,11 +56,13 @@ export function AppShell({
   account,
   projects,
   estimates,
+  hasVerifiedPhone,
   children,
 }: {
   account: string | null;
   projects: Item[];
   estimates: Item[];
+  hasVerifiedPhone: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -191,36 +193,53 @@ export function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top navbar: account identity + controls on the right at every
             size; the hamburger + wordmark on the left only on mobile, where
-            the sidebar is hidden behind the drawer. */}
-        <header className="sticky top-0 z-30 flex items-center border-b bg-background px-4 py-3">
-          <div className="flex items-center gap-3 md:hidden">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Open menu"
-              onClick={() => setOpen(true)}
-            >
-              <MenuIcon className="size-5" />
-            </Button>
-            <Link href="/" className="font-semibold text-primary">
-              Estimator
-            </Link>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {account && (
-              <span className="hidden max-w-[16rem] truncate text-sm text-muted-foreground sm:inline">
-                {account}
-              </span>
-            )}
-            <ThemeToggle />
-            <form action={logout}>
-              <Button type="submit" variant="ghost" size="sm">
-                Log out
+            the sidebar is hidden behind the drawer. The onboarding banner
+            (when present) is a second row in the same sticky block, so it
+            scrolls with the navbar instead of the page -- "constant" means
+            visible while navigating, not just on first load. */}
+        <div className="sticky top-0 z-30 flex flex-col border-b bg-background">
+          <header className="flex items-center px-4 py-3">
+            <div className="flex items-center gap-3 md:hidden">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Open menu"
+                onClick={() => setOpen(true)}
+              >
+                <MenuIcon className="size-5" />
               </Button>
-            </form>
-          </div>
-        </header>
+              <Link href="/" className="font-semibold text-primary">
+                Estimator
+              </Link>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              {account && (
+                <span className="hidden max-w-[16rem] truncate text-sm text-muted-foreground sm:inline">
+                  {account}
+                </span>
+              )}
+              <ThemeToggle />
+              <form action={logout}>
+                <Button type="submit" variant="ghost" size="sm">
+                  Log out
+                </Button>
+              </form>
+            </div>
+          </header>
+
+          {/* Only hidden on /settings itself, where the same CTA it links
+              to is already right there -- every other page keeps it. */}
+          {!hasVerifiedPhone && pathname !== "/settings" && (
+            <Link
+              href="/settings"
+              className="flex items-center justify-center gap-2 border-t border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-400"
+            >
+              Verify a phone number to text in receipts.
+              <span className="font-medium underline underline-offset-2">Set up SMS intake</span>
+            </Link>
+          )}
+        </div>
 
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">{children}</main>
 
