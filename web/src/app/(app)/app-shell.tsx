@@ -4,8 +4,10 @@ import {
   ChevronDownIcon,
   FileTextIcon,
   FolderIcon,
+  InboxIcon,
   MenuIcon,
   SearchIcon,
+  SettingsIcon,
   ShieldCheckIcon,
   XIcon,
   type LucideIcon,
@@ -23,10 +25,18 @@ type Item = { id: string; name: string };
 
 const PRIMARY_NAV = [
   { href: "/search", label: "Search", icon: SearchIcon, exact: false, shortcut: "⌘K" },
+  { href: "/inbox", label: "Inbox", icon: InboxIcon, exact: false, shortcut: undefined },
   {
     href: "/credentials",
     label: "Credentials",
     icon: ShieldCheckIcon,
+    exact: false,
+    shortcut: undefined,
+  },
+  {
+    href: "/settings",
+    label: "Settings",
+    icon: SettingsIcon,
     exact: false,
     shortcut: undefined,
   },

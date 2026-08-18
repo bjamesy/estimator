@@ -15,6 +15,15 @@ const PUBLIC_PATHS = ["/login", "/signup", "/auth"];
 // from the "signed-in users skip public pages" redirect below.
 const TOKEN_AUTHORIZED_PATHS = ["/sign"];
 
+// Twilio's inbound SMS/MMS webhook (web/src/app/api/twilio/inbound/route.ts)
+// -- there is no session (Twilio calls this directly), and it's not a URL
+// token like /sign either. It authenticates itself via Twilio's own
+// request signature inside the route handler, so it just needs to be
+// exempt from the session gate here -- own list so that distinction (and
+// the fact that this path's real auth check lives elsewhere) stays
+// visible in the code rather than folding it into TOKEN_AUTHORIZED_PATHS.
+const SIGNATURE_AUTHORIZED_PATHS = ["/api/twilio"];
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -49,8 +58,11 @@ export async function updateSession(request: NextRequest) {
   const isTokenAuthorizedPath = TOKEN_AUTHORIZED_PATHS.some((path) =>
     request.nextUrl.pathname.startsWith(path),
   );
+  const isSignatureAuthorizedPath = SIGNATURE_AUTHORIZED_PATHS.some((path) =>
+    request.nextUrl.pathname.startsWith(path),
+  );
 
-  if (!user && !isPublicPath && !isTokenAuthorizedPath) {
+  if (!user && !isPublicPath && !isTokenAuthorizedPath && !isSignatureAuthorizedPath) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

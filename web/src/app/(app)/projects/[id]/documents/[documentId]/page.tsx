@@ -2,39 +2,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  DocumentStatusIndicator,
+  DocumentStatusMessage,
+  LineItemsTable,
+} from "@/components/document-review";
 import { documentFileName } from "@/lib/documents";
 import { extractionPayloadSchema } from "@/lib/extraction-payload";
 import { createClient } from "@/lib/supabase/server";
-import { cn } from "@/lib/utils";
 
 import { ConfirmButton } from "./confirm-button";
 import { MaterialMatches } from "./material-matches";
-
-// Subtle dot + label status, matching the documents list (replaces the loud
-// filled badge).
-const STATUS_META: Record<string, { dot: string; label: string }> = {
-  pending: { dot: "bg-amber-500", label: "Pending review" },
-  confirmed: { dot: "bg-emerald-500", label: "Confirmed" },
-  failed: { dot: "bg-destructive", label: "Failed" },
-  rejected: { dot: "bg-muted-foreground", label: "Rejected" },
-};
-
-function StatusIndicator({ status }: { status: string }) {
-  const meta = STATUS_META[status] ?? { dot: "bg-muted-foreground", label: status };
-  return (
-    <span className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
-      <span className={cn("size-2 rounded-full", meta.dot)} />
-      {meta.label}
-    </span>
-  );
-}
 
 export default async function DocumentReviewPage({
   params,
@@ -129,7 +106,7 @@ export default async function DocumentReviewPage({
           <h1 className="text-2xl font-semibold">
             {parsed?.success ? parsed.data.supplier_name : documentFileName(document.storage_path)}
           </h1>
-          <StatusIndicator status={document.status} />
+          <DocumentStatusIndicator status={document.status} />
         </div>
         {parsed?.success && (
           <p className="truncate text-sm text-muted-foreground">
@@ -142,59 +119,17 @@ export default async function DocumentReviewPage({
         )}
       </div>
 
-      {document.status === "failed" && (
-        <p className="text-destructive">
-          Processing failed{latestFailure ? ` at the "${latestFailure.stage}" stage` : ""}
-          {latestFailure?.error_message ? `: ${latestFailure.error_message}` : "."} Re-upload the
-          document to try again.
-        </p>
-      )}
-
-      {document.status === "rejected" && (
-        <p className="text-muted-foreground">
-          This doesn&apos;t look like a purchase document
-          {document.rejection_reason ? ` — ${document.rejection_reason}` : ""}. Nothing was added to
-          your history. If this really is a receipt or invoice, re-upload a clearer copy.
-        </p>
-      )}
-
-      {!extractionResult && document.status !== "failed" && document.status !== "rejected" && (
-        <p className="text-muted-foreground">
-          Still processing -- no extracted data yet. Refresh in a moment.
-        </p>
-      )}
-
-      {extractionResult && !parsed?.success && (
-        <p className="text-destructive">Extracted data is malformed and cannot be reviewed.</p>
-      )}
+      <DocumentStatusMessage
+        status={document.status}
+        rejectionReason={document.rejection_reason}
+        latestFailure={latestFailure}
+        hasExtractionResult={Boolean(extractionResult)}
+        extractionParsedOk={parsed?.success ?? false}
+      />
 
       {parsed?.success && (
         <>
-          {/* min-width so the columns keep readable widths and the table's
-              overflow-x-auto scrolls (a sliding bar) on mobile instead of
-              squishing everything into the Description column. */}
-          <Table className="min-w-[640px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Description</TableHead>
-                <TableHead>SKU</TableHead>
-                <TableHead>Qty</TableHead>
-                <TableHead>Unit price</TableHead>
-                <TableHead>Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {parsed.data.line_items.map((item, i) => (
-                <TableRow key={i}>
-                  <TableCell>{item.description}</TableCell>
-                  <TableCell>{item.sku ?? "—"}</TableCell>
-                  <TableCell>{item.quantity}</TableCell>
-                  <TableCell>${item.unit_price.toFixed(2)}</TableCell>
-                  <TableCell>${item.total.toFixed(2)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <LineItemsTable lineItems={parsed.data.line_items} />
 
           {document.status === "pending" && (
             <ConfirmButton documentId={document.id} projectId={projectId} />

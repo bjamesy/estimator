@@ -4,23 +4,13 @@ import { revalidatePath } from "next/cache";
 
 import { publishProcessDocumentTask } from "@/lib/celery";
 import { tryGetCurrentCompanyId } from "@/lib/company";
+import {
+  ALLOWED_EXTENSIONS,
+  ALLOWED_TYPES,
+  POSTGRES_UNIQUE_VIOLATION,
+  sha256Hex,
+} from "@/lib/document-intake";
 import { createClient } from "@/lib/supabase/server";
-
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/heic",
-  "image/heif",
-];
-const ALLOWED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif"];
-
-const POSTGRES_UNIQUE_VIOLATION = "23505";
-
-async function sha256Hex(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Buffer.from(digest).toString("hex");
-}
 
 export async function uploadDocument(
   projectId: string,
@@ -73,7 +63,7 @@ export async function uploadDocument(
   // only catches exact byte duplicates; two different photos of the
   // same physical receipt are different bytes (semantic dedupe is a
   // separate, post-MVP concern).
-  const contentHash = await sha256Hex(file);
+  const contentHash = await sha256Hex(await file.arrayBuffer());
   const { data: duplicate } = await supabase
     .from("documents")
     .select("status, created_at")
