@@ -15,6 +15,14 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Next.js inlines NEXT_PUBLIC_* vars into the client bundle at build
+# time, not runtime -- an env_file/fly secrets value set only at
+# container-start would never reach the browser bundle (see
+# src/lib/supabase/client.ts). Must be passed as --build-arg.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 # output: "standalone" (next.config.ts) makes this produce a minimal
 # .next/standalone runtime instead of requiring the full node_modules
 # tree below.
