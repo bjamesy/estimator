@@ -11,7 +11,14 @@ import { createClient } from "@/lib/supabase/server";
 // the PKCE verifier cookie but not yet a session, so the auth gate would
 // otherwise bounce them to /login before the exchange can run.
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  // request.url resolves against the Next.js standalone server's own bind
+  // address (0.0.0.0:3000) when self-hosted behind a reverse proxy (Fly,
+  // Caddy) instead of the public host -- build the origin from the
+  // forwarded headers the proxy actually sets instead.
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  const origin = `${proto}://${host}`;
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error_description") ?? searchParams.get("error");
 
