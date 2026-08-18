@@ -15,7 +15,10 @@ function escapeLikePattern(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-export async function confirmDocument(documentId: string): Promise<{ error: string | null }> {
+export async function confirmDocument(
+  documentId: string,
+  projectId?: string,
+): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
   const { data: document, error: docError } = await supabase
@@ -30,6 +33,28 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
 
   if (document.status !== "pending") {
     return { error: `Document is already ${document.status}; cannot confirm again.` };
+  }
+
+  // A web-uploaded document always has a project already; that's fixed at
+  // upload time and not overridable here. An SMS-received document
+  // (web/src/app/api/twilio/inbound/route.ts) has none yet -- the caller
+  // (the /inbox review page) must supply one, validated the same way
+  // uploadDocument validates project ownership.
+  let resolvedProjectId = document.project_id;
+  if (resolvedProjectId === null) {
+    if (!projectId) {
+      return { error: "Choose a project for this document before confirming." };
+    }
+    const { data: project } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", projectId)
+      .eq("company_id", document.company_id)
+      .maybeSingle();
+    if (!project) {
+      return { error: "Project not found." };
+    }
+    resolvedProjectId = projectId;
   }
 
   const { data: extractionResult, error: erError } = await supabase
@@ -95,7 +120,7 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
   const { data: invoice, error: invoiceError } = await supabase
     .from("invoices")
     .insert({
-      project_id: document.project_id,
+      project_id: resolvedProjectId,
       document_id: document.id,
       supplier_id: supplierId,
       company_id: document.company_id,
@@ -134,9 +159,14 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
     }
   }
 
+  // Backfilling project_id here (not just status) means a document that
+  // arrived via SMS with no project shows up under /projects/[id] like
+  // any other document once confirmed, rather than staying invisible
+  // there forever -- the more intuitive outcome, and no more of an
+  // immutability break than the status transition itself already is.
   const { error: statusError } = await supabase
     .from("documents")
-    .update({ status: "confirmed" })
+    .update({ status: "confirmed", project_id: resolvedProjectId })
     .eq("id", document.id);
 
   if (statusError) {
@@ -155,7 +185,9 @@ export async function confirmDocument(documentId: string): Promise<{ error: stri
     // Swallowed intentionally -- see comment above.
   }
 
-  revalidatePath(`/projects/${document.project_id}`);
-  revalidatePath(`/projects/${document.project_id}/documents/${document.id}`);
+  revalidatePath(`/projects/${resolvedProjectId}`);
+  revalidatePath(`/projects/${resolvedProjectId}/documents/${document.id}`);
+  revalidatePath("/inbox");
+  revalidatePath(`/inbox/${document.id}`);
   return { error: null };
 }
