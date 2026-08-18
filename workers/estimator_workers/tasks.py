@@ -13,6 +13,7 @@ from estimator_workers.change_order_pdf import ChangeOrderData, render_change_or
 from estimator_workers.config import APP_BASE_URL
 from estimator_workers.emails import send_email
 from estimator_workers.events import finish_event, mark_document_failed, start_event
+from estimator_workers.sms import send_sms
 from estimator_workers.extraction import (
     SUPPORTED_MIME_TYPES,
     NonRetryableExtractionError,
@@ -137,6 +138,34 @@ def parse(
                     document_id,
                     storage_path,
                 )
+
+            # Only set for documents that arrived via the Twilio webhook
+            # (web/src/app/api/twilio/inbound/route.ts) -- a web upload
+            # has no phone to reply to, and the rejection is already
+            # visible in the app either way. Best-effort: the rejection
+            # itself is already durably recorded above, so a failed SMS
+            # send must not fail (and retry) this stage.
+            sender = (
+                supabase.table("documents")
+                .select("sms_sender_phone")
+                .eq("id", document_id)
+                .single()
+                .execute()
+            )
+            sender_phone = sender.data.get("sms_sender_phone") if sender.data else None
+            if sender_phone:
+                try:
+                    send_sms(
+                        sender_phone,
+                        "That didn't look like a receipt or invoice, so we didn't add it. "
+                        "Try a clearer photo, or text a different document.",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to send rejection SMS for document %s to %s",
+                        document_id,
+                        sender_phone,
+                    )
             return
         supabase.table("extraction_results").insert(
             {"document_id": document_id, "payload": outcome.payload.model_dump()}

@@ -30,11 +30,15 @@ export function PhoneVerificationCard({
   function handleSendCode() {
     setError(null);
     startSending(async () => {
-      const { error } = await sendPhoneVerificationCode(phone);
+      const { error, phoneNumber } = await sendPhoneVerificationCode(phone);
       if (error) {
         setError(error);
         return;
       }
+      // Server normalizes (e.g. a bare 10-digit number becomes +1XXXXXXXXXX)
+      // -- match the field to what was actually sent to, since that's what
+      // verifyPhoneCode needs back.
+      if (phoneNumber) setPhone(phoneNumber);
       setCodeSent(true);
     });
   }
@@ -97,7 +101,7 @@ export function PhoneVerificationCard({
               Phone number
               <Input
                 type="tel"
-                placeholder="+15551234567"
+                placeholder="(555) 123-4567"
                 value={phone}
                 disabled={codeSent}
                 onChange={(e) => setPhone(e.target.value)}

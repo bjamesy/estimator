@@ -19,14 +19,34 @@ function hashCode(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
 
+// Twilio's From header on the inbound webhook is always strict E.164, so
+// whatever a user types here has to normalize to exactly that or a
+// registered number will never match an incoming text. Most users will
+// just type a 10-digit number with no country code -- assume North
+// America (+1) rather than making them type "+1" themselves; anyone who
+// does type a "+" is trusted as already-international and only gets
+// non-digits stripped.
+function normalizeToE164(input: string): string | null {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("+")) {
+    const candidate = `+${trimmed.slice(1).replace(/\D/g, "")}`;
+    return E164.test(candidate) ? candidate : null;
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return null;
+}
+
 // Sends a 6-digit code to phoneNumber via SMS, tying the challenge to the
 // caller's company so verifyPhoneCode can't be used to register a number
 // under a different company than the one that requested the code.
 export async function sendPhoneVerificationCode(
-  phoneNumber: string,
-): Promise<{ error: string | null }> {
-  if (!E164.test(phoneNumber)) {
-    return { error: "Enter a phone number in international format, e.g. +15551234567." };
+  rawPhoneNumber: string,
+): Promise<{ error: string | null; phoneNumber?: string }> {
+  const phoneNumber = normalizeToE164(rawPhoneNumber);
+  if (!phoneNumber) {
+    return { error: "Enter a valid 10-digit phone number." };
   }
 
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
@@ -71,7 +91,7 @@ export async function sendPhoneVerificationCode(
     };
   }
 
-  return { error: null };
+  return { error: null, phoneNumber };
 }
 
 // Confirms the code and, on success, claims phoneNumber for the caller's
@@ -79,9 +99,14 @@ export async function sendPhoneVerificationCode(
 // webhook trusts to route an incoming text to a company with no session
 // involved.
 export async function verifyPhoneCode(
-  phoneNumber: string,
+  rawPhoneNumber: string,
   code: string,
 ): Promise<{ error: string | null }> {
+  const phoneNumber = normalizeToE164(rawPhoneNumber);
+  if (!phoneNumber) {
+    return { error: "Enter a valid 10-digit phone number." };
+  }
+
   const { companyId, error: companyError } = await tryGetCurrentCompanyId();
   if (companyError !== null) {
     return { error: companyError };
