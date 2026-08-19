@@ -1,6 +1,8 @@
 import { listRegisteredPhoneNumbers } from "@/app/actions/phone";
+import { getQuickBooksConnectionStatus } from "@/app/actions/quickbooks";
 
 import { PhoneVerificationCard } from "./phone-verification-card";
+import { QuickBooksCard } from "./quickbooks-card";
 
 // First (and so far only) settings surface -- SMS receipt intake needs a
 // home somewhere that isn't Credentials (vendor license/insurance docs,
@@ -8,7 +10,10 @@ import { PhoneVerificationCard } from "./phone-verification-card";
 // than crowding an existing one. Room to grow if more account-level
 // settings show up later.
 export default async function SettingsPage() {
-  const numbers = await listRegisteredPhoneNumbers();
+  const [numbers, { connected }] = await Promise.all([
+    listRegisteredPhoneNumbers(),
+    getQuickBooksConnectionStatus(),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -19,6 +24,7 @@ export default async function SettingsPage() {
         </p>
       </div>
       <PhoneVerificationCard registeredNumbers={numbers} />
+      <QuickBooksCard connected={connected} />
     </div>
   );
 }

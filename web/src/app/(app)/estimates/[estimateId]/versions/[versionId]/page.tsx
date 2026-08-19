@@ -15,9 +15,11 @@ import {
   type Signature,
   type VersionLine,
 } from "@/components/change-order/change-order-view";
+import { getQuickBooksConnectionStatus } from "@/app/actions/quickbooks";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/server";
 
+import { PushToQuickBooks } from "./push-to-quickbooks";
 import { GeneratePdfButton, SignContractorForm, SigningLinkPanel } from "./signature-section";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -39,7 +41,7 @@ export default async function EstimateVersionPage({
   const { data: version } = await supabase
     .from("estimate_versions")
     .select(
-      "id, version_number, status, total, pct_change_from_root, created_at, contractor_signed_at, client_signed_at, pdf_storage_path, estimates(name)",
+      "id, version_number, status, total, pct_change_from_root, created_at, contractor_signed_at, client_signed_at, pdf_storage_path, quickbooks_invoice_id, estimates(name)",
     )
     .eq("id", versionId)
     .eq("estimate_id", estimateId)
@@ -83,6 +85,7 @@ export default async function EstimateVersionPage({
   }
 
   const pct = version.pct_change_from_root;
+  const { connected: quickBooksConnected } = await getQuickBooksConnectionStatus();
 
   // The rendered legal PDF (Phase 4). Signed URL is short-lived and
   // per-render; the storage object sits under the company prefix, so the
@@ -124,6 +127,14 @@ export default async function EstimateVersionPage({
       <VersionTotals rootTotal={rootTotal} versionTotal={version.total} pct={pct} />
 
       <VersionLinesTable lines={lines} versionTotal={version.total} />
+
+      <PushToQuickBooks
+        versionId={versionId}
+        isSigned={version.status === "executed"}
+        alreadyPushed={version.quickbooks_invoice_id !== null}
+        connected={quickBooksConnected}
+        defaultCustomerName={clientSignature?.signer_name ?? ""}
+      />
 
       {/* Signing lifecycle (docs/v2/plans/01-change-orders-plan.md ->
           Phase 3): draft -> contractor signs -> pending_client_signature
